@@ -2,7 +2,7 @@ import os
 import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-import openai
+from openai import OpenAI
 
 # Enable logging
 logging.basicConfig(
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-openai.api_key = OPENAI_API_KEY
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
@@ -28,7 +28,7 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_question = " ".join(context.args)
     await update.message.reply_text("Thinking... 🤔")
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": user_question}],
             max_tokens=300
