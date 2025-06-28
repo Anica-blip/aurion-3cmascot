@@ -10,6 +10,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Get secrets from environment variables
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -28,7 +29,7 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Thinking... 🤔")
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",  # Use your available model
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": user_question}],
             max_tokens=300
         )
@@ -36,7 +37,10 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(answer)
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
-        await update.message.reply_text("Sorry, there was an error getting a response from OpenAI.")
+        await update.message.reply_text(
+            "Sorry, there was an error getting a response from OpenAI.\n"
+            f"Error details: {e}"
+        )
 
 def main():
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY:
