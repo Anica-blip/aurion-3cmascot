@@ -3,7 +3,7 @@ import logging
 import random
 import re
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 from openai import OpenAI
 from supabase import create_client, Client
 
@@ -57,6 +57,38 @@ def get_faq_answer(user_question):
     if len(result.data) > 0:
         return result.data[0]['answer']
     return None
+
+# --- New handler: Welcome new members ---
+async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for member in update.message.new_chat_members:
+        if member.is_bot:
+            continue
+        await update.message.reply_text(
+            f"Welcome, {member.first_name}! Aurion here—let’s make your journey with 3C amazing! If you need anything, just ask. {SIGNOFF}"
+        )
+
+# --- New handler: Farewell members ---
+async def farewell_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    left_member = update.message.left_chat_member
+    if not left_member.is_bot:
+        await update.message.reply_text(
+            f"Sad to see you go, {left_member.first_name}! Remember, the 3C crew will be here if you ever want to return. {SIGNOFF}"
+        )
+
+# --- New handler: Keyword-based replies ---
+KEYWORD_RESPONSES = [
+    ("help", "If you need a hand, just type /ask followed by your question! Aurion's got your back."),
+    ("motivate", "You’re stronger than you think, Champ! Every step counts."),
+    ("thanks", "Anytime, Champ! Let’s keep that good energy rolling!"),
+    # Add more as you wish
+]
+
+async def keyword_responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    for keyword, response in KEYWORD_RESPONSES:
+        if keyword in text:
+            await update.message.reply_text(response)
+            break
 
 # --- Bot commands ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -115,6 +147,10 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ask", ask))
+    # --- Register new handlers here ---
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
+    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
     print("Aurion is polling. Press Ctrl+C to stop.")
     app.run_polling()
 
