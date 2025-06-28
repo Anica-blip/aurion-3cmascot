@@ -1,6 +1,7 @@
 import os
 import logging
 import random
+import asyncpg
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from openai import OpenAI
@@ -12,13 +13,10 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# For greeting tracking (move to DB for production)
-greeted_users = set()
-
-# Processing phrases
 processing_messages = [
     "Hey Champ, give me a second to help you with that!",
     "Hang tight, Champ! Aurion's on it.",
@@ -33,12 +31,28 @@ WELCOME = (
     "To begin our conversation type /ask <adding your question> so that I can assist you."
 )
 
+# --- Database helpers ---
+async def get_db_connection():
+    return await asyncpg.connect(SUPABASE_DB_URL)
 
+async def has_greeted(user_id):
+    conn = await get_db_connection()
+    row = await conn.fetchrow('SELECT 1 FROM greeted_users WHERE user_id = $1', user_id)
+    await conn.close()
+    return row is not None
+
+async def mark_greeted(user_id):
+    conn = await get_db_connection()
+    # Only insert if not exists
+    await conn.execute('INSERT INTO greeted_users (user_id) VALUES ($1) ON CONFLICT DO NOTHING', user_id)
+    await conn.close()
+
+# --- Bot commands ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    if user_id not in greeted_users:
+    if not await has_greeted(user_id):
         await update.message.reply_text(WELCOME)
-        greeted_users.add(user_id)
+        await mark_greeted(user_id)
     else:
         await update.message.reply_text(
             random.choice(processing_messages)
@@ -50,10 +64,8 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Champ, you gotta ask a question after /ask!")
         return
     user_question = " ".join(context.args)
-    # Show a random processing message
     await update.message.reply_text(random.choice(processing_messages))
     try:
-        # Use OpenAI to generate a short, varied reply
         system_prompt = (
             "You are Aurion, the 3C Mascot: energetic, motivating, a bit cheeky, and always supportive. "
             "Reply in 1-2 short paragraphs. Vary your phrasing for returning users. "
@@ -81,8 +93,8 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
 def main():
-    if not TELEGRAM_TOKEN or not OPENAI_API_KEY:
-        logger.error("TELEGRAM_BOT_TOKEN or OPENAI_API_KEY not set in environment variables.")
+    if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_DB_URL:
+        logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_DB_URL).")
         return
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
