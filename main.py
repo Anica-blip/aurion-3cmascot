@@ -1,10 +1,10 @@
 import os
 import logging
 import random
-import asyncpg
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from openai import OpenAI
+from supabase import create_client, Client
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -13,9 +13,11 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 processing_messages = [
     "Hey Champ, give me a second to help you with that!",
@@ -31,36 +33,27 @@ WELCOME = (
     "To begin our conversation type /ask <adding your question> so that I can assist you."
 )
 
-# --- Database helpers ---
-async def get_db_connection():
-    return await asyncpg.connect(SUPABASE_DB_URL)
+# --- Database helpers using Supabase REST ---
+def has_greeted(user_id):
+    result = supabase.table("greeted_users").select("user_id").eq("user_id", user_id).execute()
+    return len(result.data) > 0
 
-async def has_greeted(user_id):
-    conn = await get_db_connection()
-    row = await conn.fetchrow('SELECT 1 FROM greeted_users WHERE user_id = $1', user_id)
-    await conn.close()
-    return row is not None
+def mark_greeted(user_id):
+    supabase.table("greeted_users").insert({"user_id": user_id}).execute()
 
-async def mark_greeted(user_id):
-    conn = await get_db_connection()
-    await conn.execute('INSERT INTO greeted_users (user_id) VALUES ($1) ON CONFLICT DO NOTHING', user_id)
-    await conn.close()
-
-async def get_faq_answer(user_question):
-    conn = await get_db_connection()
+def get_faq_answer(user_question):
     # Simple keyword match; you can improve this with fuzzy logic later!
-    row = await conn.fetchrow(
-        "SELECT answer FROM faq WHERE LOWER($1) LIKE '%' || LOWER(question) || '%'", user_question
-    )
-    await conn.close()
-    return row['answer'] if row else None
+    result = supabase.table("faq").select("answer").ilike("question", f"%{user_question}%").execute()
+    if len(result.data) > 0:
+        return result.data[0]['answer']
+    return None
 
 # --- Bot commands ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    if not await has_greeted(user_id):
+    if not has_greeted(user_id):
         await update.message.reply_text(WELCOME)
-        await mark_greeted(user_id)
+        mark_greeted(user_id)
     else:
         await update.message.reply_text(
             random.choice(processing_messages)
@@ -75,10 +68,9 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(random.choice(processing_messages))
     try:
         # First, try your FAQ KB
-        faq_answer = await get_faq_answer(user_question)
+        faq_answer = get_faq_answer(user_question)
         if faq_answer:
-            # Remove trailing punctuation to avoid double punctuation before signoff
-            answer = faq_answer.rstrip() 
+            answer = faq_answer.rstrip()
             if not answer.endswith(('.', '!', '?')):
                 answer += '.'
             answer = answer + SIGNOFF
@@ -100,7 +92,6 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 max_tokens=300
             )
             answer = response.choices[0].message.content.strip()
-            # Remove trailing punctuation to avoid double punctuation before signoff
             answer = answer.rstrip()
             if not answer.endswith(('.', '!', '?')):
                 answer += '.'
@@ -114,8 +105,8 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
 def main():
-    if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_DB_URL:
-        logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_DB_URL).")
+    if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
+        logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
         return
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
