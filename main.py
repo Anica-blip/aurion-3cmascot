@@ -32,7 +32,6 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     messages=[{"role": "user", "content": user_message}],
     max_tokens=300
 )
-        )
         answer = response.choices[0].message.content.strip()
         await update.message.reply_text(answer)
     except Exception as e:
