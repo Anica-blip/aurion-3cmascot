@@ -1,6 +1,7 @@
 import os
 import logging
 import random
+import re
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from openai import OpenAI
@@ -26,12 +27,21 @@ processing_messages = [
     "Just a sec, Champ! Let me get that sorted for you.",
 ]
 
-SIGNOFF = ' Keep crushing it, Champ! Aurion'
+SIGNOFF = 'Keep crushing it, Champ! Aurion'
 
 WELCOME = (
     "Hello Champ, Aurion here, the 3C Mascot. Part motivator, part mischief, and now, officially LIVE here on Telegram! "
     "To begin our conversation type /ask <adding your question> so that I can assist you."
 )
+
+def ensure_signoff_once(answer, signoff):
+    # Remove trailing whitespace and duplicate signoff if present
+    pattern = r'[\s.]*' + re.escape(signoff) + r'[\s.]*$'
+    answer = re.sub(pattern, '', answer.strip())
+    # Ensure answer ends with proper punctuation before signoff
+    if not answer.endswith(('.', '!', '?')):
+        answer += '.'
+    return answer + ' ' + signoff
 
 # --- Database helpers using Supabase REST ---
 def has_greeted(user_id):
@@ -70,10 +80,7 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # First, try your FAQ KB
         faq_answer = get_faq_answer(user_question)
         if faq_answer:
-            answer = faq_answer.rstrip()
-            if not answer.endswith(('.', '!', '?')):
-                answer += '.'
-            answer = answer + SIGNOFF
+            answer = ensure_signoff_once(faq_answer, SIGNOFF)
         else:
             # Otherwise, use OpenAI
             system_prompt = (
@@ -92,16 +99,12 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 max_tokens=300
             )
             answer = response.choices[0].message.content.strip()
-            answer = answer.rstrip()
-            if not answer.endswith(('.', '!', '?')):
-                answer += '.'
-            if not answer.endswith(SIGNOFF):
-                answer = answer + SIGNOFF
+            answer = ensure_signoff_once(answer, SIGNOFF)
         await update.message.reply_text(answer)
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
         await update.message.reply_text(
-            f"Sorry Champ, Aurion hit a snag getting your answer. Error details: {e}{SIGNOFF}"
+            ensure_signoff_once(f"Sorry Champ, Aurion hit a snag getting your answer. Error details: {e}", SIGNOFF)
         )
 
 def main():
