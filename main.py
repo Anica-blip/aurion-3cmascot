@@ -28,8 +28,9 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Thinking... 🤔")
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": user_question}],
+    model="gpt-4o-mini",  # Use your available model
+    messages=[{"role": "user", "content": user_message}]
+),
             max_tokens=300,
         )
         answer = response.choices[0].message.content.strip()
