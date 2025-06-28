@@ -28,10 +28,10 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Thinking... 🤔")
     try:
         response = openai.ChatCompletion.create(
-    model="gpt-4o-mini",  # Use your available model
-    messages=[{"role": "user", "content": user_message}],
-    max_tokens=300
-)
+            model="gpt-4o-mini",  # Use your available model
+            messages=[{"role": "user", "content": user_question}],
+            max_tokens=300
+        )
         answer = response.choices[0].message.content.strip()
         await update.message.reply_text(answer)
     except Exception as e:
