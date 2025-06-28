@@ -24,7 +24,7 @@ processing_messages = [
     "Just a sec, Champ! Let me get that sorted for you.",
 ]
 
-SIGNOFF = '\n\nOur mission is "We Rise As One", Keep crushing it, Champ! Aurion'
+SIGNOFF = ' Keep crushing it, Champ! Aurion'
 
 WELCOME = (
     "Hello Champ, Aurion here, the 3C Mascot. Part motivator, part mischief, and now, officially LIVE here on Telegram! "
@@ -43,9 +43,17 @@ async def has_greeted(user_id):
 
 async def mark_greeted(user_id):
     conn = await get_db_connection()
-    # Only insert if not exists
     await conn.execute('INSERT INTO greeted_users (user_id) VALUES ($1) ON CONFLICT DO NOTHING', user_id)
     await conn.close()
+
+async def get_faq_answer(user_question):
+    conn = await get_db_connection()
+    # Simple keyword match; you can improve this with fuzzy logic later!
+    row = await conn.fetchrow(
+        "SELECT answer FROM faq WHERE LOWER($1) LIKE '%' || LOWER(question) || '%'", user_question
+    )
+    await conn.close()
+    return row['answer'] if row else None
 
 # --- Bot commands ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -66,30 +74,43 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_question = " ".join(context.args)
     await update.message.reply_text(random.choice(processing_messages))
     try:
-        system_prompt = (
-            "You are Aurion, the 3C Mascot: energetic, motivating, a bit cheeky, and always supportive. "
-            "Reply in 1-2 short paragraphs. Vary your phrasing for returning users. "
-            "After your answer, always add this signoff, separated by a line: "
-            "'Our mission is \"We Rise As One\", Keep crushing it, Champ! Aurion'"
-        )
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_question}
-        ]
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            max_tokens=300
-        )
-        answer = response.choices[0].message.content.strip()
-        if SIGNOFF not in answer:
-            answer += SIGNOFF
+        # First, try your FAQ KB
+        faq_answer = await get_faq_answer(user_question)
+        if faq_answer:
+            # Remove trailing punctuation to avoid double punctuation before signoff
+            answer = faq_answer.rstrip() 
+            if not answer.endswith(('.', '!', '?')):
+                answer += '.'
+            answer = answer + SIGNOFF
+        else:
+            # Otherwise, use OpenAI
+            system_prompt = (
+                "You are Aurion, the 3C Mascot: energetic, motivating, a bit cheeky, and always supportive. "
+                "Reply in 1-2 short paragraphs. Vary your phrasing for returning users. "
+                "After your answer, always add this signoff, no line break, just space after the last full stop: "
+                "'Keep crushing it, Champ! Aurion'"
+            )
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_question}
+            ]
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                max_tokens=300
+            )
+            answer = response.choices[0].message.content.strip()
+            # Remove trailing punctuation to avoid double punctuation before signoff
+            answer = answer.rstrip()
+            if not answer.endswith(('.', '!', '?')):
+                answer += '.'
+            if not answer.endswith(SIGNOFF):
+                answer = answer + SIGNOFF
         await update.message.reply_text(answer)
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
         await update.message.reply_text(
-            "Sorry Champ, Aurion hit a snag getting your answer.\n"
-            f"Error details: {e}\n{SIGNOFF}"
+            f"Sorry Champ, Aurion hit a snag getting your answer. Error details: {e}{SIGNOFF}"
         )
 
 def main():
