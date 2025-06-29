@@ -14,6 +14,9 @@ from telegram.ext import (
 from openai import OpenAI
 from supabase import create_client, Client
 
+# Import the hashtags and topics handlers from aurion_extras.py
+from aurion_extras import hashtags, topics
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -188,6 +191,8 @@ def main():
     app.add_handler(CommandHandler("ask", ask))
     app.add_handler(CommandHandler("faq", faq))
     app.add_handler(CallbackQueryHandler(faq_button, pattern="^faq_"))
+    app.add_handler(CommandHandler("hashtags", hashtags))
+    app.add_handler(CommandHandler("topics", topics))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
