@@ -29,16 +29,28 @@ processing_messages = [
 
 SIGNOFF = 'Keep crushing it, Champ! Aurion'
 
+# --- UPDATED WELCOME & FAREWELL MESSAGES ---
 WELCOME = (
-    "Hello Champ, Aurion here, the 3C Mascot. Part motivator, part mischief, and now, officially LIVE here on Telegram! "
-    "To begin our conversation type /ask <adding your question> so that I can assist you."
+    "Welcome to 3C Thread To Success –your ultimate space for personal transformation and growth. "
+    "Whether you're dreaming big or taking small steps, we’re here to help you think it, do it, and own it!\n\n"
+    "You've just joined a vibrant community built to turn your life into a purpose-driven adventure —filled with clarity, confidence, and courage. 🌱\n\n"
+    "💎 Here’s something we believe in deeply:\n"
+    "Every person is a diamond —even if you're still buried in the rough. Growth isn’t about becoming someone else... "
+    "it’s about polishing what’s already there. So take your time, trust the process, and shine brighter with every step.\n\n"
+    "For everything you need, head over to:\n👉 https://anica-blip.github.io/3c-links/\n"
+    "There you’ll find our success links, tools, goal setting, challenges, and more. Or just send me a message —I’m Aurion, your guide along this journey.\n\n"
+    "Together, we rise. Together, we polish. Together, we shine. 💫\n"
+    "Let’s embark on this adventure and make a difference —one gem at a time."
+)
+
+FAREWELL = (
+    "Sad to see you go. Remember, you’re always welcome back. "
+    "Stay strong and focused on polishing your diamond. 💎🔥"
 )
 
 def ensure_signoff_once(answer, signoff):
-    # Remove trailing whitespace and duplicate signoff if present
     pattern = r'[\s.]*' + re.escape(signoff) + r'[\s.]*$'
     answer = re.sub(pattern, '', answer.strip())
-    # Ensure answer ends with proper punctuation before signoff
     if not answer.endswith(('.', '!', '?')):
         answer += '.'
     return answer + ' ' + signoff
@@ -52,30 +64,25 @@ def mark_greeted(user_id):
     supabase.table("greeted_users").insert({"user_id": user_id}).execute()
 
 def get_faq_answer(user_question):
-    # Simple keyword match; you can improve this with fuzzy logic later!
     result = supabase.table("faq").select("answer").ilike("question", f"%{user_question}%").execute()
     if len(result.data) > 0:
         return result.data[0]['answer']
     return None
 
-# --- New handler: Welcome new members ---
+# --- Welcome new members ---
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for member in update.message.new_chat_members:
         if member.is_bot:
             continue
-        await update.message.reply_text(
-            f"Welcome, {member.first_name}! Aurion here—let’s make your journey with 3C amazing! If you need anything, just ask. {SIGNOFF}"
-        )
+        await update.message.reply_text(WELCOME)
 
-# --- New handler: Farewell members ---
+# --- Farewell members ---
 async def farewell_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     left_member = update.message.left_chat_member
     if not left_member.is_bot:
-        await update.message.reply_text(
-            f"Sad to see you go, {left_member.first_name}! Remember, the 3C crew will be here if you ever want to return. {SIGNOFF}"
-        )
+        await update.message.reply_text(FAREWELL)
 
-# --- New handler: Keyword-based replies ---
+# --- Keyword-based replies ---
 KEYWORD_RESPONSES = [
     ("help", "If you need a hand, just type /ask followed by your question! Aurion's got your back."),
     ("motivate", "You’re stronger than you think, Champ! Every step counts."),
@@ -109,12 +116,10 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_question = " ".join(context.args)
     await update.message.reply_text(random.choice(processing_messages))
     try:
-        # First, try your FAQ KB
         faq_answer = get_faq_answer(user_question)
         if faq_answer:
             answer = ensure_signoff_once(faq_answer, SIGNOFF)
         else:
-            # Otherwise, use OpenAI
             system_prompt = (
                 "You are Aurion, the 3C Mascot: energetic, motivating, a bit cheeky, and always supportive. "
                 "Reply in 1-2 short paragraphs. Vary your phrasing for returning users. "
