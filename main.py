@@ -2,8 +2,15 @@ import os
 import logging
 import random
 import re
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    filters,
+)
 from openai import OpenAI
 from supabase import create_client, Client
 
@@ -29,7 +36,6 @@ processing_messages = [
 
 SIGNOFF = 'Keep crushing it, Champ! Aurion'
 
-# --- UPDATED WELCOME & FAREWELL MESSAGES ---
 WELCOME = (
     "Welcome to 3C Thread To Success –your ultimate space for personal transformation and growth. "
     "Whether you're dreaming big or taking small steps, we’re here to help you think it, do it, and own it!\n\n"
@@ -68,6 +74,34 @@ def get_faq_answer(user_question):
     if len(result.data) > 0:
         return result.data[0]['answer']
     return None
+
+# ------------------- FAQ BUTTON HANDLER --------------------
+FAQ_QUESTIONS = [
+    "What is the 3C Thread To Success ecosystem?",
+    "Who is Aurion?",
+    "Who is Caelum?",
+    "What kind of experience can I expect here?",
+]
+
+async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    buttons = []
+    for question in FAQ_QUESTIONS:
+        data = supabase.table("faq").select("id,question").eq("question", question).single().execute()
+        if data.data:
+            buttons.append([InlineKeyboardButton(question, callback_data=f'faq_{data.data["id"]}')])
+    if not buttons:
+        await update.message.reply_text("No FAQ available yet.")
+        return
+    reply_markup = InlineKeyboardMarkup(buttons)
+    await update.message.reply_text("Choose a question:", reply_markup=reply_markup)
+
+async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    faq_id = query.data.replace('faq_', '')
+    data = supabase.table("faq").select("answer").eq("id", faq_id).single().execute()
+    answer = data.data['answer'] if data.data else "No answer found."
+    await query.edit_message_text(answer)
 
 # --- Welcome new members ---
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -152,7 +186,8 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ask", ask))
-    # --- Register new handlers here ---
+    app.add_handler(CommandHandler("faq", faq))
+    app.add_handler(CallbackQueryHandler(faq_button, pattern="^faq_"))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
