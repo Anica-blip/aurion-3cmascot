@@ -65,6 +65,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/rules - View community rules\n"
         "/fact - Get a random fact\n"
         "/manual_post <message> - (Owner only) Post as Aurion\n"
+        "/id - Get the 3C Links web app\n"
         "Ask me anything or use keywords for quick help! 💬"
     )
 
@@ -117,6 +118,9 @@ async def manual_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(f"📢 {msg}")
 
+async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"Check out our web app: {GITHUB_LINK}")
+
 async def echo_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Checks all keywords in DB, replies if message contains one.
     text = update.message.text.lower()
@@ -166,6 +170,7 @@ def main():
     app.add_handler(CommandHandler("fact", fact))
     app.add_handler(CommandHandler("faq", faq))
     app.add_handler(CommandHandler("manual_post", manual_post))
+    app.add_handler(CommandHandler("id", id_command))  # <-- Added handler for /id
     app.add_handler(CallbackQueryHandler(faq_button, pattern="^faq_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo_keyword))
 
