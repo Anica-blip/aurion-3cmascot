@@ -181,6 +181,9 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             ensure_signoff_once(f"Sorry Champ, Aurion hit a snag getting your answer. Error details: {e}", SIGNOFF)
         )
 
+async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Check out our web app: https://anica-blip.github.io/3c-links/")
+
 def main():
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
         logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
@@ -189,6 +192,7 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ask", ask))
+    app.add_handler(CommandHandler("id", id_command))  # <-- Register the /id handler here
     app.add_handler(CommandHandler("faq", faq))
     app.add_handler(CallbackQueryHandler(faq_button, pattern="^faq_"))
     app.add_handler(CommandHandler("hashtags", hashtags))
