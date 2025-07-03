@@ -75,25 +75,18 @@ def get_faq_answer(user_question):
         return result.data[0]['answer']
     return None
 
-# ------------------- FAQ BUTTON HANDLER --------------------
-FAQ_QUESTIONS = [
-    "What is the 3C Thread To Success ecosystem?",
-    "Who is Aurion?",
-    "Who is Caelum?",
-    "What kind of experience can I expect here?",
-]
-
+# ------------------- FAQ BUTTON HANDLER (dynamic) --------------------
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    buttons = []
-    for question in FAQ_QUESTIONS:
-        data = supabase.table("faq").select("id,question").eq("question", question).single().execute()
-        if data.data:
-            buttons.append([InlineKeyboardButton(question, callback_data=f'faq_{data.data["id"]}')])
-    if not buttons:
+    data = supabase.table("faq").select("id,question").execute()
+    faqs = data.data or []
+    if not faqs:
         await update.message.reply_text("No FAQ available yet.")
         return
-    reply_markup = InlineKeyboardMarkup(buttons)
-    await update.message.reply_text("Choose a question:", reply_markup=reply_markup)
+    keyboard = [
+        [InlineKeyboardButton(q["question"], callback_data=f'faq_{q["id"]}')] for q in faqs
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Select a FAQ:", reply_markup=reply_markup)
 
 async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -102,6 +95,25 @@ async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = supabase.table("faq").select("answer").eq("id", faq_id).single().execute()
     answer = data.data['answer'] if data.data else "No answer found."
     await query.edit_message_text(answer)
+
+# --- /fact command ---
+async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = supabase.table("fact").select("fact").execute()
+    facts = [item['fact'] for item in data.data] if data.data else []
+    if facts:
+        await update.message.reply_text(f"💎 Aurion Fact:\n{random.choice(facts)}")
+    else:
+        await update.message.reply_text("No facts found in the database.")
+
+# --- /resources command ---
+async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = supabase.table("resources").select("title,link").execute()
+    resources_list = data.data or []
+    if not resources_list:
+        await update.message.reply_text("No resources found in the database.")
+        return
+    msg_lines = [f"[{item['title']}]({item['link']})" for item in resources_list]
+    await update.message.reply_text("Here are some resources:\n" + "\n".join(msg_lines), parse_mode="Markdown")
 
 # --- Welcome new members ---
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -182,11 +194,18 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Check out our digital 3C /id card: https://anica-blip.github.io/3c-links/")
 
-# --- /help command with 'guidance' reference ---
+# --- /help command with 'guidance' reference and resources mention ---
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Let me know exactly what you're looking for so that I can guide you.\n\n"
-        "You can ask Aurion for tips, facts, or guidance. Try /faq, /hashtags, /topics, /id, or type your question!"
+        "You can ask Aurion for tips, facts, or guidance. Try:\n"
+        "/faq – Browse FAQs\n"
+        "/fact – Get a random fact\n"
+        "/resources – View resources\n"
+        "/hashtags – Show hashtags\n"
+        "/topics – Show topics\n"
+        "/id – Get the 3C Links web app\n"
+        "Or just type your question!"
     )
 
 # --- /topics command with custom list ---
@@ -204,10 +223,7 @@ TOPICS_LIST = [
 ]
 
 async def topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Instructions message
     await update.message.reply_text("Please press this /topics and the list below should be the response after pressing /topics")
-
-    # Build the message with titles and links
     msg_lines = []
     for idx, (title, url) in enumerate(TOPICS_LIST, 1):
         msg_lines.append(f"{idx}) [{title}]({url})")
@@ -227,10 +243,7 @@ HASHTAGS_LIST = [
 ]
 
 async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Instructions message
     await update.message.reply_text("Please press this /hashtags and the list below should be the response after pressing /hashtags")
-
-    # Build the message with hashtags
     msg = "\n".join(HASHTAGS_LIST)
     await update.message.reply_text(msg)
 
@@ -244,6 +257,8 @@ def main():
     app.add_handler(CommandHandler("ask", ask))
     app.add_handler(CommandHandler("faq", faq))
     app.add_handler(CallbackQueryHandler(faq_button, pattern="^faq_"))
+    app.add_handler(CommandHandler("fact", fact))
+    app.add_handler(CommandHandler("resources", resources))
     app.add_handler(CommandHandler("id", id_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("hashtags", hashtags))
