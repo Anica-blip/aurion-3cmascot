@@ -54,6 +54,8 @@ FAREWELL = (
     "Stay strong and focused on polishing your diamond. 💎🔥"
 )
 
+RULES_LINK = "https://t.me/c/2377255109/6/400"
+
 def ensure_signoff_once(answer, signoff):
     pattern = r'[\s.]*' + re.escape(signoff) + r'[\s.]*$'
     answer = re.sub(pattern, '', answer.strip())
@@ -156,6 +158,10 @@ async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
 
+# --- /rules command ---
+async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"Community Rules: {RULES_LINK}")
+
 # --- Welcome new members ---
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for member in update.message.new_chat_members:
@@ -243,6 +249,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/faq – Browse FAQs\n"
         "/fact – Get a random fact\n"
         "/resources – View resources\n"
+        "/rules – View community rules\n"
         "/hashtags – Show hashtags\n"
         "/topics – Show topics\n"
         "/id – Get the 3C Links web app\n"
@@ -300,134 +307,7 @@ def main():
     app.add_handler(CallbackQueryHandler(faq_button, pattern="^faq_"))
     app.add_handler(CommandHandler("fact", fact))
     app.add_handler(CommandHandler("resources", resources))
-    app.add_handler(CommandHandler("id", id_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("hashtags", hashtags))
-    app.add_handler(CommandHandler("topics", topics))
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
-    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
-    print("Aurion is polling. Press Ctrl+C to stop.")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
-# --- Bot commands ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    if not has_greeted(user_id):
-        await update.message.reply_text(WELCOME)
-        mark_greeted(user_id)
-    else:
-        await update.message.reply_text(
-            random.choice(processing_messages)
-        )
-
-async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    if not context.args:
-        await update.message.reply_text("Champ, you gotta ask a question after /ask!")
-        return
-    user_question = " ".join(context.args)
-    await update.message.reply_text(random.choice(processing_messages))
-    try:
-        faq_answer = get_faq_answer(user_question)
-        if faq_answer:
-            answer = ensure_signoff_once(faq_answer, SIGNOFF)
-        else:
-            system_prompt = (
-                "You are Aurion, the 3C Mascot: energetic, motivating, a bit cheeky, and always supportive. "
-                "Reply in 1-2 short paragraphs. Vary your phrasing for returning users. "
-                "After your answer, always add this signoff, no line break, just space after the last full stop: "
-                "'Keep crushing it, Champ! Aurion'"
-            )
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_question}
-            ]
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,
-                max_tokens=300
-            )
-            answer = response.choices[0].message.content.strip()
-            answer = ensure_signoff_once(answer, SIGNOFF)
-        await update.message.reply_text(answer)
-    except Exception as e:
-        logger.error(f"OpenAI API error: {e}")
-        await update.message.reply_text(
-            ensure_signoff_once(f"Sorry Champ, Aurion hit a snag getting your answer. Error details: {e}", SIGNOFF)
-        )
-
-# --- /id card command ---
-async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Check out our digital 3C /id card: https://anica-blip.github.io/3c-links/")
-
-# --- /help command with 'guidance' reference and resources mention ---
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Let me know exactly what you're looking for so that I can guide you.\n\n"
-        "You can ask Aurion for tips, facts, or guidance. Try:\n"
-        "/faq – Browse FAQs\n"
-        "/fact – Get a random fact\n"
-        "/resources – View resources\n"
-        "/hashtags – Show hashtags\n"
-        "/topics – Show topics\n"
-        "/id – Get the 3C Links web app\n"
-        "Or just type your question!"
-    )
-
-# --- /topics command with custom list ---
-TOPICS_LIST = [
-    ("Aurion Gems", "https://t.me/c/2377255109/138"),
-    ("ClubHouse Chatroom", "https://t.me/c/2377255109/10"),
-    ("ClubHouse News & Releases", "https://t.me/c/2377255109/6"),
-    ("ClubHouse Notices", "https://t.me/c/2377255109/1"),
-    ("Weekly Challenges", "https://t.me/c/2377255109/39"),
-    ("ClubHouse Mini-Challenges", "https://t.me/c/2377255109/25"),
-    ("ClubHouse Learning", "https://t.me/c/2377255109/12"),
-    ("3C Evolution Badges", "https://t.me/c/2377255109/355"),
-    ("3C LEVEL 1", "https://t.me/c/2377255109/342"),
-    ("3C LEVEL 2", "https://t.me/c/2377255109/347"),
-]
-
-async def topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Please press this /topics and the list below should be the response after pressing /topics")
-    msg_lines = []
-    for idx, (title, url) in enumerate(TOPICS_LIST, 1):
-        msg_lines.append(f"{idx}) [{title}]({url})")
-    msg = "\n".join(msg_lines)
-    await update.message.reply_text(msg, parse_mode="Markdown")
-
-# --- /hashtags command with custom list ---
-HASHTAGS_LIST = [
-    "#Topics",
-    "#Blog",
-    "#Provisions",
-    "#Training",
-    "#Knowledge",
-    "#Language",
-    "#Audiobook",
-    "#Healingmusic",
-]
-
-async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Please press this /hashtags and the list below should be the response after pressing /hashtags")
-    msg = "\n".join(HASHTAGS_LIST)
-    await update.message.reply_text(msg)
-
-def main():
-    if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
-        logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
-        return
-
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("ask", ask))
-    app.add_handler(CommandHandler("faq", faq))
-    app.add_handler(CallbackQueryHandler(faq_button, pattern="^faq_"))
-    app.add_handler(CommandHandler("fact", fact))
-    app.add_handler(CommandHandler("resources", resources))
+    app.add_handler(CommandHandler("rules", rules))
     app.add_handler(CommandHandler("id", id_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("hashtags", hashtags))
