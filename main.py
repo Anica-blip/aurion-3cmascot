@@ -14,9 +14,6 @@ from telegram.ext import (
 from openai import OpenAI
 from supabase import create_client, Client
 
-# Import the hashtags and topics handlers from aurion_extras.py
-from aurion_extras import hashtags, topics
-
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -185,6 +182,58 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Check out our digital 3C /id card: https://anica-blip.github.io/3c-links/")
 
+# --- /help command with 'guidance' reference ---
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Let me know exactly what you're looking for so that I can guide you.\n\n"
+        "You can ask Aurion for tips, facts, or guidance. Try /faq, /hashtags, /topics, /id, or type your question!"
+    )
+
+# --- /topics command with custom list ---
+TOPICS_LIST = [
+    ("Aurion Gems", "https://t.me/c/2377255109/138"),
+    ("ClubHouse Chatroom", "https://t.me/c/2377255109/10"),
+    ("ClubHouse News & Releases", "https://t.me/c/2377255109/6"),
+    ("ClubHouse Notices", "https://t.me/c/2377255109/1"),
+    ("Weekly Challenges", "https://t.me/c/2377255109/39"),
+    ("ClubHouse Mini-Challenges", "https://t.me/c/2377255109/25"),
+    ("ClubHouse Learning", "https://t.me/c/2377255109/12"),
+    ("3C Evolution Badges", "https://t.me/c/2377255109/355"),
+    ("3C LEVEL 1", "https://t.me/c/2377255109/342"),
+    ("3C LEVEL 2", "https://t.me/c/2377255109/347"),
+]
+
+async def topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Instructions message
+    await update.message.reply_text("Please press this /topics and the list below should be the response after pressing /topics")
+
+    # Build the message with titles and links
+    msg_lines = []
+    for idx, (title, url) in enumerate(TOPICS_LIST, 1):
+        msg_lines.append(f"{idx}) [{title}]({url})")
+    msg = "\n".join(msg_lines)
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+# --- /hashtags command with custom list ---
+HASHTAGS_LIST = [
+    "#Topics",
+    "#Blog",
+    "#Provisions",
+    "#Training",
+    "#Knowledge",
+    "#Language",
+    "#Audiobook",
+    "#Healingmusic",
+]
+
+async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Instructions message
+    await update.message.reply_text("Please press this /hashtags and the list below should be the response after pressing /hashtags")
+
+    # Build the message with hashtags
+    msg = "\n".join(HASHTAGS_LIST)
+    await update.message.reply_text(msg)
+
 def main():
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
         logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
@@ -196,6 +245,7 @@ def main():
     app.add_handler(CommandHandler("faq", faq))
     app.add_handler(CallbackQueryHandler(faq_button, pattern="^faq_"))
     app.add_handler(CommandHandler("id", id_command))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("hashtags", hashtags))
     app.add_handler(CommandHandler("topics", topics))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
