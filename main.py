@@ -63,57 +63,101 @@ def ensure_signoff_once(answer, signoff):
 
 # --- Database helpers using Supabase REST ---
 def has_greeted(user_id):
-    result = supabase.table("greeted_users").select("user_id").eq("user_id", user_id).execute()
-    return len(result.data) > 0
+    try:
+        result = supabase.table("greeted_users").select("user_id").eq("user_id", user_id).execute()
+        return len(result.data) > 0
+    except Exception as e:
+        logger.error(f"Supabase error in has_greeted: {e}")
+        return False
 
 def mark_greeted(user_id):
-    supabase.table("greeted_users").insert({"user_id": user_id}).execute()
+    try:
+        supabase.table("greeted_users").insert({"user_id": user_id}).execute()
+    except Exception as e:
+        logger.error(f"Supabase error in mark_greeted: {e}")
 
 def get_faq_answer(user_question):
-    result = supabase.table("faq").select("answer").ilike("question", f"%{user_question}%").execute()
-    if len(result.data) > 0:
-        return result.data[0]['answer']
-    return None
+    try:
+        result = supabase.table("faq").select("answer").ilike("question", f"%{user_question}%").execute()
+        if len(result.data) > 0:
+            return result.data[0]['answer']
+        return None
+    except Exception as e:
+        logger.error(f"Supabase error in get_faq_answer: {e}")
+        return None
 
 # ------------------- FAQ BUTTON HANDLER (dynamic) --------------------
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = supabase.table("faq").select("id,question").execute()
-    faqs = data.data or []
-    if not faqs:
-        await update.message.reply_text("No FAQ available yet.")
-        return
-    keyboard = [
-        [InlineKeyboardButton(q["question"], callback_data=f'faq_{q["id"]}')] for q in faqs
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Select a FAQ:", reply_markup=reply_markup)
+    try:
+        data = supabase.table("faq").select("id,question").execute()
+        faqs = data.data or []
+        if not faqs:
+            await update.message.reply_text(
+                "No FAQ available yet. (Aurion's knowledge base is currently empty, or the database is having issues.)"
+            )
+            return
+        keyboard = [
+            [InlineKeyboardButton(q["question"], callback_data=f'faq_{q["id"]}')] for q in faqs
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("Select a FAQ:", reply_markup=reply_markup)
+    except Exception as e:
+        logger.error(f"Supabase FAQ error: {e}")
+        await update.message.reply_text(
+            "Sorry, Champ! Aurion can't fetch FAQs right now because the database is having technical issues. "
+            "Please try again soon! (If this keeps happening, let an admin know.)"
+        )
 
 async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    faq_id = query.data.replace('faq_', '')
-    data = supabase.table("faq").select("answer").eq("id", faq_id).single().execute()
-    answer = data.data['answer'] if data.data else "No answer found."
-    await query.edit_message_text(answer)
+    try:
+        query = update.callback_query
+        await query.answer()
+        faq_id = query.data.replace('faq_', '')
+        data = supabase.table("faq").select("answer").eq("id", faq_id).single().execute()
+        answer = data.data['answer'] if data.data else "No answer found."
+        await query.edit_message_text(answer)
+    except Exception as e:
+        logger.error(f"Supabase FAQ button error: {e}")
+        await update.callback_query.edit_message_text(
+            "Sorry, Champ! Aurion can't fetch this FAQ answer due to technical issues right now."
+        )
 
 # --- /fact command ---
 async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = supabase.table("fact").select("fact").execute()
-    facts = [item['fact'] for item in data.data] if data.data else []
-    if facts:
-        await update.message.reply_text(f"💎 Aurion Fact:\n{random.choice(facts)}")
-    else:
-        await update.message.reply_text("No facts found in the database.")
+    try:
+        data = supabase.table("fact").select("fact").execute()
+        facts = [item['fact'] for item in data.data] if data.data else []
+        if facts:
+            await update.message.reply_text(f"💎 Aurion Fact:\n{random.choice(facts)}")
+        else:
+            await update.message.reply_text(
+                "No facts found in the database at this time. (Aurion's fact vault is empty or the database is down.)"
+            )
+    except Exception as e:
+        logger.error(f"Supabase fact error: {e}")
+        await update.message.reply_text(
+            "Sorry, Champ! Aurion can't fetch a fact right now because the knowledge base is having technical issues. "
+            "Try again later for a fun fact!"
+        )
 
 # --- /resources command ---
 async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    data = supabase.table("resources").select("title,link").execute()
-    resources_list = data.data or []
-    if not resources_list:
-        await update.message.reply_text("No resources found in the database.")
-        return
-    msg_lines = [f"[{item['title']}]({item['link']})" for item in resources_list]
-    await update.message.reply_text("Here are some resources:\n" + "\n".join(msg_lines), parse_mode="Markdown")
+    try:
+        data = supabase.table("resources").select("title,link").execute()
+        resources_list = data.data or []
+        if not resources_list:
+            await update.message.reply_text(
+                "No resources found in the database at this time. (Aurion's toolkit is empty or the database is down.)"
+            )
+            return
+        msg_lines = [f"[{item['title']}]({item['link']})" for item in resources_list]
+        await update.message.reply_text("Here are some resources:\n" + "\n".join(msg_lines), parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Supabase resources error: {e}")
+        await update.message.reply_text(
+            "Sorry, Champ! Aurion can't fetch resources right now due to technical issues. "
+            "Try again later, or contact an admin if this continues."
+        )
 
 # --- Welcome new members ---
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
