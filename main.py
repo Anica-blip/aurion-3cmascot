@@ -92,11 +92,33 @@ def get_faq_answer(user_question):
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         data = supabase.table("faq").select("id,question").execute()
-        faqs = data.data or []
-        if not faqs:
+        faq = data.data or []
+        # ✅ Filter to only the 4 IDs you want
+        faq = [item for item in faq if item['id'] in [1, 2, 8, 9]]
+
+        if not faq:
             await update.message.reply_text(
                 "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
             )
+            return
+
+        # ✅ Create one button per question
+        buttons = [
+            [InlineKeyboardButton(item["question"], callback_data=f"faq_{item['id']}")]
+            for item in faq
+        ]
+        reply_markup = InlineKeyboardMarkup(buttons)
+
+        await update.message.reply_text(
+            "Here are some popular questions you can ask Aurion:",
+            reply_markup=reply_markup
+        )
+
+    except Exception as e:
+        logger.error(f"Supabase faq error: {e}")
+        await update.message.reply_text(
+            "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
+        )
             return
         keyboard = [
             [InlineKeyboardButton(q["question"], callback_data=f'faq_{q["id"]}')] for q in faqs
