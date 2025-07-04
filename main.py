@@ -101,9 +101,8 @@ async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
             )
             return
+        keyboard = [
 
-        # ✅ Create one button per question
-        buttons = [
             [InlineKeyboardButton(item["question"], callback_data=f"faq_{item['id']}")]
             for item in faq
         ]
@@ -151,7 +150,7 @@ async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = supabase.table("fact").select("fact").execute()
         facts = [item['fact'] for item in data.data] if data.data else []
         if facts:
-            await update.message.reply_text(f"💎 Aurion Fact:\n{random.choice(facts)}")
+            await update.message.reply_text(f"💎 Aurion, here are 3C Fun Facts:\n{random.choice(facts)}")
         else:
             await update.message.reply_text(
                 "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
