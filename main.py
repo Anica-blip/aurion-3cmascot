@@ -91,34 +91,20 @@ def get_faq_answer(user_question):
 # --- /faq command ---
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-                data = supabase.table("faq").select("id,question").in_("id", [1, 2, 8, 9]).execute()
+        data = supabase.table("faq").select("id,question").execute()
         faqs = data.data or []
-
         if not faqs:
             await update.message.reply_text(
                 "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
             )
             return
-
-        # Create inline buttons for the selected FAQs
-        buttons = [
-            [InlineKeyboardButton(faq['question'], callback_data=f"faq_{faq['id']}")]
-            for faq in faqs
-        ]
-        reply_markup = InlineKeyboardMarkup(buttons)
-
-        await update.message.reply_text(
-            "Here are some popular questions you can ask Aurion:",
-            reply_markup=reply_markup
-        )
-            return
         keyboard = [
-            [InlineKeyboardButton(q["question"], callback_data=f'faq_{q["id"]}')] for q in faq
+            [InlineKeyboardButton(q["question"], callback_data=f'faq_{q["id"]}')] for q in faqs
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Select a faq:", reply_markup=reply_markup)
+        await update.message.reply_text("Select a FAQ:", reply_markup=reply_markup)
     except Exception as e:
-        logger.error(f"Supabase faq error: {e}")
+        logger.error(f"Supabase FAQ error: {e}")
         await update.message.reply_text(
             "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
@@ -132,7 +118,7 @@ async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         answer = data.data['answer'] if data.data else "No answer found."
         await query.edit_message_text(answer)
     except Exception as e:
-        logger.error(f"Supabase faq button error: {e}")
+        logger.error(f"Supabase FAQ button error: {e}")
         await update.callback_query.edit_message_text(
             "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
@@ -140,25 +126,19 @@ async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- /fact command ---
 async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        data = supabase.table("faq").select("id,question").execute()
-faqs = [item for item in data.data if str(item['id']) in ["1", "2", "8", "9"]] if data.data else []
-
-if not faqs:
-    await update.message.reply_text(
-        "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
-    )
-    return
-
-buttons = [
-    [InlineKeyboardButton(faq['question'], callback_data=f"faq_{faq['id']}")]
-    for faq in faqs
-]
-reply_markup = InlineKeyboardMarkup(buttons)
-
-await update.message.reply_text(
-    "Here are some popular questions you can ask Aurion:",
-    reply_markup=reply_markup
-)
+        data = supabase.table("fact").select("fact").execute()
+        facts = [item['fact'] for item in data.data] if data.data else []
+        if facts:
+            await update.message.reply_text(f"💎 Aurion Fact:\n{random.choice(facts)}")
+        else:
+            await update.message.reply_text(
+                "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
+            )
+    except Exception as e:
+        logger.error(f"Supabase fact error: {e}")
+        await update.message.reply_text(
+            "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
+        )
 
 # --- /resources command ---
 async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
