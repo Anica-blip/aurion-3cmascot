@@ -118,7 +118,7 @@ async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         answer = data.data['answer'] if data.data else "No answer found."
         await query.edit_message_text(answer)
     except Exception as e:
-        logger.error(f"Supabase FAQ button error: {e}")
+        logger.error(f"Supabase faq button error: {e}")
         await update.callback_query.edit_message_text(
             "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
