@@ -140,19 +140,25 @@ async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- /fact command ---
 async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        data = supabase.table("fact").select("fact").execute()
-        facts = [item['fact'] for item in data.data] if data.data else []
-        if facts:
-            await update.message.reply_text(f"💎 Aurion Fact:\n{random.choice(facts)}")
-        else:
-            await update.message.reply_text(
-                "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
-            )
-    except Exception as e:
-        logger.error(f"Supabase fact error: {e}")
-        await update.message.reply_text(
-            "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
-        )
+        data = supabase.table("faq").select("id,question").execute()
+faqs = [item for item in data.data if str(item['id']) in ["1", "2", "8", "9"]] if data.data else []
+
+if not faqs:
+    await update.message.reply_text(
+        "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
+    )
+    return
+
+buttons = [
+    [InlineKeyboardButton(faq['question'], callback_data=f"faq_{faq['id']}")]
+    for faq in faqs
+]
+reply_markup = InlineKeyboardMarkup(buttons)
+
+await update.message.reply_text(
+    "Here are some popular questions you can ask Aurion:",
+    reply_markup=reply_markup
+)
 
 # --- /resources command ---
 async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
