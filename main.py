@@ -92,32 +92,11 @@ def get_faq_answer(user_question):
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         data = supabase.table("faq").select("id,question").execute()
-        faq = data.data or []
-        # ✅ Filter to only the 4 IDs you want
-        faq = [item for item in faq if item['id'] in [1, 2, 8, 9]]
-
-        if not faq:
+        faqs = data.data or []
+        if not faqs:
             await update.message.reply_text(
                 "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
             )
-            return
-        keyboard = [
-
-            [InlineKeyboardButton(item["question"], callback_data=f"faq_{item['id']}")]
-            for item in faq
-        ]
-        reply_markup = InlineKeyboardMarkup(buttons)
-
-        await update.message.reply_text(
-            "Here are some popular questions you can ask Aurion:",
-            reply_markup=reply_markup
-        )
-
-    except Exception as e:
-        logger.error(f"Supabase faq error: {e}")
-        await update.message.reply_text(
-            "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
-        )
             return
         keyboard = [
             [InlineKeyboardButton(q["question"], callback_data=f'faq_{q["id"]}')] for q in faqs
@@ -150,7 +129,7 @@ async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = supabase.table("fact").select("fact").execute()
         facts = [item['fact'] for item in data.data] if data.data else []
         if facts:
-            await update.message.reply_text(f"💎 Aurion, here are 3C Fun Facts:\n{random.choice(facts)}")
+            await update.message.reply_text(f"💎 Aurion Fact:\n{random.choice(facts)}")
         else:
             await update.message.reply_text(
                 "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
