@@ -91,12 +91,26 @@ def get_faq_answer(user_question):
 # --- /faq command ---
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        data = supabase.table("faq").select("id,question").execute()
-        faq = data.data or []
-        if not faq:
+                data = supabase.table("faq").select("id,question").in_("id", [1, 2, 8, 9]).execute()
+        faqs = data.data or []
+
+        if not faqs:
             await update.message.reply_text(
                 "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
             )
+            return
+
+        # Create inline buttons for the selected FAQs
+        buttons = [
+            [InlineKeyboardButton(faq['question'], callback_data=f"faq_{faq['id']}")]
+            for faq in faqs
+        ]
+        reply_markup = InlineKeyboardMarkup(buttons)
+
+        await update.message.reply_text(
+            "Here are some popular questions you can ask Aurion:",
+            reply_markup=reply_markup
+        )
             return
         keyboard = [
             [InlineKeyboardButton(q["question"], callback_data=f'faq_{q["id"]}')] for q in faq
