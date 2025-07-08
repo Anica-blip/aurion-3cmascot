@@ -14,6 +14,13 @@ from telegram.ext import (
 from openai import OpenAI
 from supabase import create_client, Client
 
+# --- NEW: For Lisbon timezone handling ---
+from pytz import timezone
+from datetime import datetime
+
+LISBON_TZ = timezone('Europe/Lisbon')
+# ---
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -87,6 +94,44 @@ def get_faq_answer(user_question):
     except Exception as e:
         logger.error(f"Supabase error in get_faq_answer: {e}")
         return None
+
+# --- NEW: Supabase 'message' table helpers ---
+def get_all_messages():
+    try:
+        result = supabase.table("message").select("*").order("schedule_at", desc=False).execute()
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Supabase error in get_all_messages: {e}")
+        return []
+
+def get_next_scheduled_message(group_channel=None):
+    try:
+        now_utc = datetime.now(timezone('UTC'))
+        query = supabase.table("message").select("*").gte("schedule_at", now_utc.isoformat())
+        if group_channel:
+            query = query.eq("group_channel", group_channel)
+        result = query.order("schedule_at", desc=False).limit(1).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        logger.error(f"Supabase error in get_next_scheduled_message: {e}")
+        return None
+
+def add_message(content, schedule_at, group_channel=None, frequency=None, title=None, notes=None):
+    try:
+        data = {
+            "content": content,
+            "schedule_at": schedule_at,  # Should be ISO 8601 string in UTC
+        }
+        if group_channel: data["group_channel"] = group_channel
+        if frequency: data["frequency"] = frequency
+        if title: data["title"] = title
+        if notes: data["notes"] = notes
+        supabase.table("message").insert(data).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Supabase error in add_message: {e}")
+        return False
+# ---
 
 # --- /faq command ---
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -295,6 +340,37 @@ async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join(HASHTAGS_LIST)
     await update.message.reply_text(msg)
 
+# --- NEW: /nextmsg command for next scheduled message ---
+async def nextmsg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    group_channel = str(update.effective_chat.id)
+    msg = get_next_scheduled_message(group_channel)
+    if not msg:
+        await update.message.reply_text("No scheduled messages found.")
+        return
+
+    # Format output, convert schedule_at to Lisbon time
+    schedule_time = (
+        datetime.fromisoformat(msg["schedule_at"].replace("Z", "+00:00"))
+        .astimezone(LISBON_TZ)
+        .strftime("%Y-%m-%d %H:%M")
+        if msg.get("schedule_at") else "unscheduled"
+    )
+    # title may be a JSONB with language keys or just text
+    title_val = msg.get("title", "")
+    if isinstance(title_val, dict):
+        title_val = title_val.get("en") or next(iter(title_val.values()), "Scheduled Message")
+    elif not title_val:
+        title_val = "Scheduled Message"
+
+    text = (
+        f"📝 *{title_val}*\n"
+        f"Content: {msg.get('content', '')}\n"
+        f"Scheduled At: {schedule_time} Lisbon time\n"
+        f"Notes: {msg.get('notes', '')}"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+# ---
+
 def main():
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
         logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
@@ -312,6 +388,9 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("hashtags", hashtags))
     app.add_handler(CommandHandler("topics", topics))
+    # --- NEW: register /nextmsg handler ---
+    app.add_handler(CommandHandler("nextmsg", nextmsg))
+    # ---
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
