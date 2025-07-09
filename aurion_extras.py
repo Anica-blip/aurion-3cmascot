@@ -1,6 +1,12 @@
 import logging
 from datetime import datetime, timezone
 
+# Define group-channel to Telegram chat link mapping here.
+GROUP_CHAT_IDS = {
+    "group 1": "https://t.me/+zpqrbbbWjG1hYTZk",  # Group 1 invite link
+    "group 2": "https://t.me/c/2377255109/10",    # Group 2 public link
+}
+
 def get_due_messages(supabase):
     """
     Fetch scheduled messages from the 'message' table in Supabase that are due to be sent and not yet marked as sent.
@@ -20,7 +26,7 @@ def get_due_messages(supabase):
         logging.error(f"Supabase error in get_due_messages: {e}")
         return []
 
-async def send_due_messages_job(context, supabase, group_chat_ids):
+async def send_due_messages_job(context, supabase):
     """
     Sends all due scheduled messages to their corresponding Telegram groups.
     Marks them as sent in the Supabase table.
@@ -28,7 +34,7 @@ async def send_due_messages_job(context, supabase, group_chat_ids):
     messages = get_due_messages(supabase)
     for msg in messages:
         group = msg.get("group_channel")
-        chat_id = group_chat_ids.get(group)
+        chat_id = GROUP_CHAT_IDS.get(group)
         content = msg.get("content")
         if chat_id and content:
             try:
@@ -40,4 +46,4 @@ async def send_due_messages_job(context, supabase, group_chat_ids):
 
 # Example usage (to be called from main.py):
 # from aurion_extras import send_due_messages_job
-# app.job_queue.run_repeating(lambda context: send_due_messages_job(context, supabase, GROUP_CHAT_IDS), interval=60)
+# app.job_queue.run_repeating(lambda context: send_due_messages_job(context, supabase), interval=60)
