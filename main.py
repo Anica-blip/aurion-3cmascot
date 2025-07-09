@@ -318,7 +318,7 @@ def get_due_messages():
         logger.error(f"Supabase error in get_due_messages: {e}")
         return []
 
-async def send_due_messages(application):
+async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
     messages = get_due_messages()
     for msg in messages:
         group = msg.get("group_channel")
@@ -326,7 +326,7 @@ async def send_due_messages(application):
         content = msg.get("content")
         if chat_id and content:
             try:
-                await application.bot.send_message(chat_id=chat_id, text=content)
+                await context.bot.send_message(chat_id=chat_id, text=content)
                 # Mark as sent (requires 'sent' column in Supabase table)
                 supabase.table("message").update({"sent": True}).eq("id", msg["id"]).execute()
                 logger.info(f"Sent message {msg['id']} to {group}")
@@ -335,7 +335,7 @@ async def send_due_messages(application):
 
 # Optional manual trigger for admin
 async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_due_messages(context.application)
+    await send_due_messages_job(context)
     await update.message.reply_text("Tried sending all due messages.")
 
 # --- Main ---
@@ -363,7 +363,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
 
     # JobQueue: Check for due messages every 60 seconds
-    app.job_queue.run_repeating(lambda context: send_due_messages(app), interval=60)
+    app.job_queue.run_repeating(send_due_messages_job, interval=60)
 
     print("Aurion is polling. Press Ctrl+C to stop.")
     app.run_polling()
