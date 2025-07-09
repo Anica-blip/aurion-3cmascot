@@ -2,6 +2,7 @@ import os
 import logging
 import random
 import re
+from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -26,6 +27,12 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Map group_channel names to Telegram invite links
+GROUP_CHAT_IDS = {
+    "group 1": "https://t.me/+zpqrbbbWjG1hYTZk",          # Group 1 invite link
+    "group 2": "https://t.me/c/2377255109/10",            # Group 2 public link
+}
 
 processing_messages = [
     "Hey Champ, give me a second to help you with that!",
@@ -295,6 +302,44 @@ async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join(HASHTAGS_LIST)
     await update.message.reply_text(msg)
 
+# --- Scheduled Message Sending Logic ---
+
+def get_due_messages():
+    now_utc = datetime.now(timezone.utc).isoformat()
+    try:
+        # Assumes there is a 'sent' boolean column, default False
+        result = supabase.table("message") \
+            .select("*") \
+            .lte("schedule_at", now_utc) \
+            .is_("sent", False) \
+            .execute()
+        return result.data or []
+    except Exception as e:
+        logger.error(f"Supabase error in get_due_messages: {e}")
+        return []
+
+async def send_due_messages(application):
+    messages = get_due_messages()
+    for msg in messages:
+        group = msg.get("group_channel")
+        chat_id = GROUP_CHAT_IDS.get(group)
+        content = msg.get("content")
+        if chat_id and content:
+            try:
+                await application.bot.send_message(chat_id=chat_id, text=content)
+                # Mark as sent (requires 'sent' column in Supabase table)
+                supabase.table("message").update({"sent": True}).eq("id", msg["id"]).execute()
+                logger.info(f"Sent message {msg['id']} to {group}")
+            except Exception as e:
+                logger.error(f"Failed to send message {msg['id']} to {group}: {e}")
+
+# Optional manual trigger for admin
+async def test_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_due_messages(context.application)
+    await update.message.reply_text("Tried sending all due messages.")
+
+# --- Main ---
+
 def main():
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
         logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
@@ -312,9 +357,14 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("hashtags", hashtags))
     app.add_handler(CommandHandler("topics", topics))
+    app.add_handler(CommandHandler("testsend", test_send))  # Manual trigger for sending due messages
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
+
+    # JobQueue: Check for due messages every 60 seconds
+    app.job_queue.run_repeating(lambda context: send_due_messages(app), interval=60)
+
     print("Aurion is polling. Press Ctrl+C to stop.")
     app.run_polling()
 
