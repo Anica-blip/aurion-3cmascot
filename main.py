@@ -4,7 +4,7 @@ import random
 import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder,
+    Application,  # <-- Correct import for v20+
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 from openai import OpenAI
 from supabase import create_client, Client
-from aurion_extras import send_due_messages_job  # <-- Import the job
+from aurion_extras import send_due_messages_job
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -296,12 +296,16 @@ async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join(HASHTAGS_LIST)
     await update.message.reply_text(msg)
 
+async def scheduled_job(context: ContextTypes.DEFAULT_TYPE):
+    await send_due_messages_job(context, supabase)
+
 def main():
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
         logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
         return
 
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ask", ask))
     app.add_handler(CommandHandler("faq", faq))
@@ -317,8 +321,8 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
 
-    # --- NEW: Schedule the Supabase job to run every 60 seconds ---
-    app.job_queue.run_repeating(lambda context: send_due_messages_job(context, supabase), interval=60)
+    # --- Schedule the Supabase job to run every 60 seconds ---
+    app.job_queue.run_repeating(scheduled_job, interval=60, first=10, name="scheduled_messages")
 
     print("Aurion is polling. Press Ctrl+C to stop.")
     app.run_polling()
