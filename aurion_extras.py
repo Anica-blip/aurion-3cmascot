@@ -28,7 +28,7 @@ def get_due_messages(supabase):
         logging.error(f"Supabase error in get_due_messages: {e}")
         return []
 
-async def send_due_messages_job(context, supabase):
+def send_due_messages_job(context, supabase):
     """
     Sends all due scheduled messages to their referenced group.
     Marks them as sent in the Supabase table.
@@ -47,7 +47,7 @@ async def send_due_messages_job(context, supabase):
             continue
 
         try:
-            await context.bot.send_message(chat_id=chat_id, text=content)
+            context.bot.send_message(chat_id=chat_id, text=content)
             logging.info(f"Sent scheduled message (id={msg.get('id')}) to group '{group_key}' (chat_id={chat_id})")
         except Exception as e:
             logging.error(f"Failed to send message (id={msg.get('id')}) to group '{group_key}' (chat_id={chat_id}): {e}")
