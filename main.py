@@ -1,21 +1,18 @@
-import pkg_resources
-print("python-telegram-bot version:", pkg_resources.get_distribution("python-telegram-bot").version)
-
 import os
 import logging
 import random
 import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Updater,
+    ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    Filters,
+    ContextTypes,
+    filters,
 )
 from openai import OpenAI
 from supabase import create_client, Client
-from aurion_extras import send_due_messages_job  # unchanged, but must be sync!
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -92,12 +89,12 @@ def get_faq_answer(user_question):
         return None
 
 # --- /faq command ---
-def faq(update: Update, context):
+async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         data = supabase.table("faq").select("id,question").execute()
         faqs = data.data or []
         if not faqs:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
             )
             return
@@ -105,78 +102,78 @@ def faq(update: Update, context):
             [InlineKeyboardButton(q["question"], callback_data=f'faq_{q["id"]}')] for q in faqs
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        update.message.reply_text("Select a FAQ:", reply_markup=reply_markup)
+        await update.message.reply_text("Select a FAQ:", reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"Supabase FAQ error: {e}")
-        update.message.reply_text(
+        await update.message.reply_text(
             "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
 
-def faq_button(update: Update, context):
+async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
-        query.answer()
+        await query.answer()
         faq_id = query.data.replace('faq_', '')
         data = supabase.table("faq").select("answer").eq("id", faq_id).single().execute()
         answer = data.data['answer'] if data.data else "No answer found."
-        query.edit_message_text(answer)
+        await query.edit_message_text(answer)
     except Exception as e:
         logger.error(f"Supabase FAQ button error: {e}")
-        update.callback_query.edit_message_text(
+        await update.callback_query.edit_message_text(
             "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
 
 # --- /fact command ---
-def fact(update: Update, context):
+async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         data = supabase.table("fact").select("fact").execute()
         facts = [item['fact'] for item in data.data] if data.data else []
         if facts:
-            update.message.reply_text(f"💎 Aurion Fact:\n{random.choice(facts)}")
+            await update.message.reply_text(f"💎 Aurion Fact:\n{random.choice(facts)}")
         else:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
             )
     except Exception as e:
         logger.error(f"Supabase fact error: {e}")
-        update.message.reply_text(
+        await update.message.reply_text(
             "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
 
 # --- /resources command ---
-def resources(update: Update, context):
+async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         data = supabase.table("resources").select("title,link").execute()
         resources_list = data.data or []
         if not resources_list:
-            update.message.reply_text(
+            await update.message.reply_text(
                 "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
             )
             return
         msg_lines = [f"[{item['title']}]({item['link']})" for item in resources_list]
-        update.message.reply_text("Here are some resources:\n" + "\n".join(msg_lines), parse_mode="Markdown")
+        await update.message.reply_text("Here are some resources:\n" + "\n".join(msg_lines), parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Supabase resources error: {e}")
-        update.message.reply_text(
+        await update.message.reply_text(
             "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
 
 # --- /rules command ---
-def rules(update: Update, context):
-    update.message.reply_text(f"Community Rules: {RULES_LINK}")
+async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"Community Rules: {RULES_LINK}")
 
 # --- Welcome new members ---
-def welcome_new_member(update: Update, context):
+async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for member in update.message.new_chat_members:
         if member.is_bot:
             continue
-        update.message.reply_text(WELCOME)
+        await update.message.reply_text(WELCOME)
 
 # --- Farewell members ---
-def farewell_member(update: Update, context):
+async def farewell_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     left_member = update.message.left_chat_member
     if not left_member.is_bot:
-        update.message.reply_text(FAREWELL)
+        await update.message.reply_text(FAREWELL)
 
 # --- Keyword-based replies ---
 KEYWORD_RESPONSES = [
@@ -186,31 +183,31 @@ KEYWORD_RESPONSES = [
     # Add more as you wish
 ]
 
-def keyword_responder(update: Update, context):
+async def keyword_responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.lower()
     for keyword, response in KEYWORD_RESPONSES:
         if keyword in text:
-            update.message.reply_text(response)
+            await update.message.reply_text(response)
             break
 
 # --- Bot commands ---
-def start(update: Update, context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     if not has_greeted(user_id):
-        update.message.reply_text(WELCOME)
+        await update.message.reply_text(WELCOME)
         mark_greeted(user_id)
     else:
-        update.message.reply_text(
+        await update.message.reply_text(
             random.choice(processing_messages)
         )
 
-def ask(update: Update, context):
+async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     if not context.args:
-        update.message.reply_text("Champ, you gotta ask a question after /ask!")
+        await update.message.reply_text("Champ, you gotta ask a question after /ask!")
         return
     user_question = " ".join(context.args)
-    update.message.reply_text(random.choice(processing_messages))
+    await update.message.reply_text(random.choice(processing_messages))
     try:
         faq_answer = get_faq_answer(user_question)
         if faq_answer:
@@ -233,20 +230,20 @@ def ask(update: Update, context):
             )
             answer = response.choices[0].message.content.strip()
             answer = ensure_signoff_once(answer, SIGNOFF)
-        update.message.reply_text(answer)
+        await update.message.reply_text(answer)
     except Exception as e:
         logger.error(f"OpenAI API error: {e}")
-        update.message.reply_text(
+        await update.message.reply_text(
             ensure_signoff_once(f"Sorry Champ, Aurion hit a snag getting your answer. Error details: {e}", SIGNOFF)
         )
 
 # --- /id card command ---
-def id_command(update: Update, context):
-    update.message.reply_text("Check out our digital 3C /id card: https://anica-blip.github.io/3c-links/")
+async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Check out our digital 3C /id card: https://anica-blip.github.io/3c-links/")
 
 # --- /help command with 'guidance' reference and resources mention ---
-def help_command(update: Update, context):
-    update.message.reply_text(
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
         "Let me know exactly what you're looking for so that I can guide you.\n\n"
         "You can ask Aurion for tips, facts, or guidance. Try:\n"
         "/faq – Browse FAQs\n"
@@ -273,13 +270,13 @@ TOPICS_LIST = [
     ("3C LEVEL 2", "https://t.me/c/2377255109/347"),
 ]
 
-def topics(update: Update, context):
-    update.message.reply_text("Please press this /topics and the list below should be the response after pressing /topics")
+async def topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Please press this /topics and the list below should be the response after pressing /topics")
     msg_lines = []
     for idx, (title, url) in enumerate(TOPICS_LIST, 1):
         msg_lines.append(f"{idx}) [{title}]({url})")
     msg = "\n".join(msg_lines)
-    update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 # --- /hashtags command with custom list ---
 HASHTAGS_LIST = [
@@ -293,44 +290,33 @@ HASHTAGS_LIST = [
     "#Healingmusic",
 ]
 
-def hashtags(update: Update, context):
-    update.message.reply_text("Please press this /hashtags and the list below should be the response after pressing /hashtags")
+async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Please press this /hashtags and the list below should be the response after pressing /hashtags")
     msg = "\n".join(HASHTAGS_LIST)
-    update.message.reply_text(msg)
-
-# --- Scheduled job for v13 (must be sync!) ---
-def scheduled_job(context):
-    send_due_messages_job(context, supabase)
+    await update.message.reply_text(msg)
 
 def main():
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
         logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
         return
 
-    updater = Updater(TELEGRAM_TOKEN, use_context=True)
-    dp = updater.dispatcher
-
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("ask", ask))
-    dp.add_handler(CommandHandler("faq", faq))
-    dp.add_handler(CallbackQueryHandler(faq_button, pattern="^faq_"))
-    dp.add_handler(CommandHandler("fact", fact))
-    dp.add_handler(CommandHandler("resources", resources))
-    dp.add_handler(CommandHandler("rules", rules))
-    dp.add_handler(CommandHandler("id", id_command))
-    dp.add_handler(CommandHandler("help", help_command))
-    dp.add_handler(CommandHandler("hashtags", hashtags))
-    dp.add_handler(CommandHandler("topics", topics))
-    dp.add_handler(MessageHandler(Filters.status_update.new_chat_members, welcome_new_member))
-    dp.add_handler(MessageHandler(Filters.status_update.left_chat_member, farewell_member))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, keyword_responder))
-
-    # --- Schedule the Supabase job to run every 60 seconds ---
-    updater.job_queue.run_repeating(scheduled_job, interval=60, first=10)
-
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("ask", ask))
+    app.add_handler(CommandHandler("faq", faq))
+    app.add_handler(CallbackQueryHandler(faq_button, pattern="^faq_"))
+    app.add_handler(CommandHandler("fact", fact))
+    app.add_handler(CommandHandler("resources", resources))
+    app.add_handler(CommandHandler("rules", rules))
+    app.add_handler(CommandHandler("id", id_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("hashtags", hashtags))
+    app.add_handler(CommandHandler("topics", topics))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
+    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
     print("Aurion is polling. Press Ctrl+C to stop.")
-    updater.start_polling()
-    updater.idle()
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
