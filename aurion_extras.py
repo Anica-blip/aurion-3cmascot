@@ -58,6 +58,5 @@ def send_due_messages_job(context, supabase):
         except Exception as e:
             logging.error(f"Failed to mark message (id={msg.get('id')}) as sent in DB: {e}")
 
-# If you want to test it outside main.py, you could add:
 if __name__ == "__main__":
     print("This module is designed for import and use by the main bot, not for standalone use.")
