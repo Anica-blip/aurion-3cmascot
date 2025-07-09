@@ -301,22 +301,26 @@ def main():
         return
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("ask", ask))
-    app.add_handler(CommandHandler("faq", faq))
-    app.add_handler(CallbackQueryHandler(faq_button, pattern="^faq_"))
-    app.add_handler(CommandHandler("fact", fact))
-    app.add_handler(CommandHandler("resources", resources))
-    app.add_handler(CommandHandler("rules", rules))
-    app.add_handler(CommandHandler("id", id_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("hashtags", hashtags))
-    app.add_handler(CommandHandler("topics", topics))
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
-    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
-    print("Aurion is polling. Press Ctrl+C to stop.")
-    app.run_polling()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("ask", ask))
+app.add_handler(CommandHandler("faq", faq))
+app.add_handler(CallbackQueryHandler(faq_button, pattern="^faq_"))
+app.add_handler(CommandHandler("fact", fact))
+app.add_handler(CommandHandler("resources", resources))
+app.add_handler(CommandHandler("rules", rules))
+app.add_handler(CommandHandler("id", id_command))
+app.add_handler(CommandHandler("help", help_command))
+app.add_handler(CommandHandler("hashtags", hashtags))
+app.add_handler(CommandHandler("topics", topics))
+app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
+app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
+
+# --- Add this line to schedule the Supabase message job (import send_due_messages_job at the top!) ---
+app.job_queue.run_repeating(lambda context: send_due_messages_job(context, supabase), interval=60)
+
+print("Aurion is polling. Press Ctrl+C to stop.")
+app.run_polling()
 
 if __name__ == "__main__":
     main()
