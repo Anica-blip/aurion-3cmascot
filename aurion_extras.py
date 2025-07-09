@@ -1,11 +1,12 @@
 import logging
 from datetime import datetime, timezone
 
-# List of group chat IDs where Aurion is admin and should send scheduled messages.
-GROUP_CHAT_IDS = [
-    -1002393705231,   # 💭 3C Thread To Success Group
-    -1002377255109    # 3C Community ClubHouse Hub
-]
+# Map group_channel names in Supabase to their Telegram numeric chat IDs
+GROUP_CHAT_IDS = {
+    "group 1": -1002393705231,   # 💭 3C Thread To Success Group
+    "group 2": -1002377255109,   # 3C Community ClubHouse Hub
+    # Add more as needed, e.g., "channel": <numeric_id>
+}
 
 def get_due_messages(supabase):
     """
@@ -29,22 +30,29 @@ def get_due_messages(supabase):
 
 async def send_due_messages_job(context, supabase):
     """
-    Sends all due scheduled messages to both Telegram groups.
+    Sends all due scheduled messages to their referenced group.
     Marks them as sent in the Supabase table.
     """
     messages = get_due_messages(supabase)
     for msg in messages:
+        group_key = msg.get("group_channel")
+        chat_id = GROUP_CHAT_IDS.get(group_key)
         content = msg.get("content")
+
+        if not group_key or chat_id is None:
+            logging.warning(f"Unknown or unmapped group_channel '{group_key}' for message ID {msg.get('id')}. Skipping.")
+            continue
         if not content:
             logging.warning(f"No content for message ID {msg.get('id')}. Skipping.")
             continue
-        for chat_id in GROUP_CHAT_IDS:
-            try:
-                await context.bot.send_message(chat_id=chat_id, text=content)
-                logging.info(f"Sent scheduled message (id={msg.get('id')}) to group {chat_id}")
-            except Exception as e:
-                logging.error(f"Failed to send message (id={msg.get('id')}) to group {chat_id}: {e}")
-        # Mark as sent
+
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=content)
+            logging.info(f"Sent scheduled message (id={msg.get('id')}) to group '{group_key}' (chat_id={chat_id})")
+        except Exception as e:
+            logging.error(f"Failed to send message (id={msg.get('id')}) to group '{group_key}' (chat_id={chat_id}): {e}")
+
+        # Mark as sent after sending attempt
         try:
             supabase.table("message").update({"sent": True}).eq("id", msg["id"]).execute()
         except Exception as e:
