@@ -14,9 +14,6 @@ from telegram.ext import (
 from openai import OpenAI
 from supabase import create_client, Client
 
-# --- Import Aurion scheduled messaging job ---
-from aurion_extras import send_due_messages_job
-
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
