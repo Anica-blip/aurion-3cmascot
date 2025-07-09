@@ -14,9 +14,6 @@ from telegram.ext import (
 from openai import OpenAI
 from supabase import create_client, Client
 
-# --- Import Aurion scheduled messaging job ---
-from aurion_extras import send_due_messages_job
-
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -142,6 +139,9 @@ async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
+
+# --- Import Aurion scheduled messaging job ---
+from aurion_extras.py import send_due_messages_job
 
 # --- /resources command ---
 async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
