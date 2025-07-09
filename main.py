@@ -1,3 +1,6 @@
+import pkg_resources
+print("python-telegram-bot version:", pkg_resources.get_distribution("python-telegram-bot").version)
+
 import os
 import logging
 import random
