@@ -280,14 +280,14 @@ async def topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- /hashtags command with custom list ---
 HASHTAGS_LIST = [
-    "#Topics",
-    "#Blog",
-    "#Provisions",
-    "#Training",
-    "#Knowledge",
-    "#Language",
-    "#Audiobook",
-    "#Healingmusic",
+    "#Topics", "https://t.me/c/2431571054/58"),
+    "#Blog", "https://t.me/c/2431571054/58"),
+    "#Provisions", "https://t.me/c/2431571054/58"),
+    "#Training", "https://t.me/c/2431571054/58"),
+    "#Knowledge", "https://t.me/c/2431571054/58"),
+    "#Language", "https://t.me/c/2431571054/58"),
+    "#Audiobook", "https://t.me/c/2431571054/58"),
+    "#Healingmusic", "https://t.me/c/2431571054/58"),
 ]
 
 async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
