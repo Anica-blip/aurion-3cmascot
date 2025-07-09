@@ -1,24 +1,43 @@
-# aurion_extras.py
-# Now only contains future helpers or utilities, as /hashtags and /topics logic has moved to main.py
+import logging
+from datetime import datetime, timezone
 
-# You can keep this as a utility file or add new features below.
-# For example, you might want to add custom extractors or message parsers.
-
-import re
-
-def extract_hashtags(text):
+def get_due_messages(supabase):
     """
-    Extracts hashtags from the given text.
-    Example: "This is a #test" -> ["#test"]
+    Fetch scheduled messages from the 'message' table in Supabase that are due to be sent and not yet marked as sent.
+    Returns a list of message dicts.
     """
-    return re.findall(r"#\w+", text)
+    now_utc = datetime.now(timezone.utc).isoformat()
+    try:
+        result = (
+            supabase.table("message")
+            .select("*")
+            .lte("schedule_at", now_utc)
+            .is_("sent", False)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        logging.error(f"Supabase error in get_due_messages: {e}")
+        return []
 
-def extract_topics(text):
+async def send_due_messages_job(context, supabase, group_chat_ids):
     """
-    Dummy function to extract topics from text.
-    Replace with your actual logic.
-    Example: split text into words longer than 3 characters
+    Sends all due scheduled messages to their corresponding Telegram groups.
+    Marks them as sent in the Supabase table.
     """
-    return [word for word in text.split() if len(word) > 3]
+    messages = get_due_messages(supabase)
+    for msg in messages:
+        group = msg.get("group_channel")
+        chat_id = group_chat_ids.get(group)
+        content = msg.get("content")
+        if chat_id and content:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=content)
+                supabase.table("message").update({"sent": True}).eq("id", msg["id"]).execute()
+                logging.info(f"Sent message {msg['id']} to {group}")
+            except Exception as e:
+                logging.error(f"Failed to send message {msg['id']} to {group}: {e}")
 
-# No Telegram handlers here now. All bot command logic is in main.py
+# Example usage (to be called from main.py):
+# from aurion_extras import send_due_messages_job
+# app.job_queue.run_repeating(lambda context: send_due_messages_job(context, supabase, GROUP_CHAT_IDS), interval=60)
