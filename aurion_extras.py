@@ -1,15 +1,16 @@
 import logging
 from datetime import datetime, timezone
 
-# Define group-channel to Telegram chat link mapping here.
-GROUP_CHAT_IDS = {
-    "group 1": "https://t.me/+zpqrbbbWjG1hYTZk",  # Group 1 invite link
-    "group 2": "https://t.me/c/2377255109/10",    # Group 2 public link
-}
+# List of group chat IDs where Aurion is admin and should send scheduled messages.
+GROUP_CHAT_IDS = [
+    -1002393705231,   # 💭 3C Thread To Success Group
+    -1002377255109    # 3C Community ClubHouse Hub
+]
 
 def get_due_messages(supabase):
     """
-    Fetch scheduled messages from the 'message' table in Supabase that are due to be sent and not yet marked as sent.
+    Fetch scheduled messages from the 'message' table in Supabase
+    that are due and not yet marked as sent.
     Returns a list of message dicts.
     """
     now_utc = datetime.now(timezone.utc).isoformat()
@@ -28,22 +29,23 @@ def get_due_messages(supabase):
 
 async def send_due_messages_job(context, supabase):
     """
-    Sends all due scheduled messages to their corresponding Telegram groups.
+    Sends all due scheduled messages to both Telegram groups.
     Marks them as sent in the Supabase table.
     """
     messages = get_due_messages(supabase)
     for msg in messages:
-        group = msg.get("group_channel")
-        chat_id = GROUP_CHAT_IDS.get(group)
         content = msg.get("content")
-        if chat_id and content:
+        if not content:
+            logging.warning(f"No content for message ID {msg.get('id')}. Skipping.")
+            continue
+        for chat_id in GROUP_CHAT_IDS:
             try:
                 await context.bot.send_message(chat_id=chat_id, text=content)
-                supabase.table("message").update({"sent": True}).eq("id", msg["id"]).execute()
-                logging.info(f"Sent message {msg['id']} to {group}")
+                logging.info(f"Sent scheduled message (id={msg.get('id')}) to group {chat_id}")
             except Exception as e:
-                logging.error(f"Failed to send message {msg['id']} to {group}: {e}")
-
-# Example usage (to be called from main.py):
-# from aurion_extras import send_due_messages_job
-# app.job_queue.run_repeating(lambda context: send_due_messages_job(context, supabase), interval=60)
+                logging.error(f"Failed to send message (id={msg.get('id')}) to group {chat_id}: {e}")
+        # Mark as sent
+        try:
+            supabase.table("message").update({"sent": True}).eq("id", msg["id"]).execute()
+        except Exception as e:
+            logging.error(f"Failed to mark message (id={msg.get('id')}) as sent in DB: {e}")
