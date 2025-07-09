@@ -1,3 +1,4 @@
 supabase
 openai
 python-telegram-bot==13.4
+Pillow
