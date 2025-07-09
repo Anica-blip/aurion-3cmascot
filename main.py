@@ -298,12 +298,18 @@ async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join(HASHTAGS_LIST)
     await update.message.reply_text(msg)
 
+# --- Schedule the Supabase job to run after initialization ---
+async def post_init(application):
+    application.job_queue.run_repeating(
+        send_due_messages_job, interval=60, first=10, data=supabase
+    )
+
 def main():
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
         logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
         return
 
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ask", ask))
     app.add_handler(CommandHandler("faq", faq))
@@ -318,10 +324,6 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
-
-    # --- Schedule the Supabase job to run every 60 seconds ---
-    app.job_queue.run_repeating(send_due_messages_job, interval=60, first=10, data=supabase)
-
     print("Aurion is polling. Press Ctrl+C to stop.")
     app.run_polling()
 
