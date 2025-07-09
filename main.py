@@ -14,6 +14,9 @@ from telegram.ext import (
 from openai import OpenAI
 from supabase import create_client, Client
 
+# --- Import Aurion scheduled messaging job ---
+from aurion_extras import send_due_messages_job
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -315,6 +318,10 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
+
+    # --- Schedule the Supabase job to run every 60 seconds ---
+    app.job_queue.run_repeating(send_due_messages_job, interval=60, first=10, data=supabase)
+
     print("Aurion is polling. Press Ctrl+C to stop.")
     app.run_polling()
 
