@@ -331,8 +331,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    print("Aurion is polling. Press Ctrl+C to stop.")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
