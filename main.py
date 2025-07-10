@@ -2,6 +2,7 @@ import os
 import logging
 import random
 import re
+from datetime import datetime, timezone, time, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -13,9 +14,6 @@ from telegram.ext import (
 )
 from openai import OpenAI
 from supabase import create_client, Client
-from datetime import datetime, timezone, time as dt_time
-
-from aurion_extras import send_due_messages_job  # <-- IMPORTED JOB LOGIC
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -30,11 +28,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- Group/channel keys to Telegram chat IDs ---
 GROUP_CHAT_IDS = {
-    "group 1": -1002393705231,    # Replace with actual group/channel names and IDs
+    "group 1": -1002393705231,
     "group 2": -1002377255109,
-    # Add more as needed
 }
 
 processing_messages = [
@@ -73,7 +69,6 @@ def ensure_signoff_once(answer, signoff):
         answer += '.'
     return answer + ' ' + signoff
 
-# --- Database helpers using Supabase REST ---
 def has_greeted(user_id):
     try:
         result = supabase.table("greeted_users").select("user_id").eq("user_id", user_id).execute()
@@ -98,7 +93,6 @@ def get_faq_answer(user_question):
         logger.error(f"Supabase error in get_faq_answer: {e}")
         return None
 
-# --- /faq command ---
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         data = supabase.table("faq").select("id,question").execute()
@@ -133,7 +127,6 @@ async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
 
-# --- /fact command ---
 async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         data = supabase.table("fact").select("fact").execute()
@@ -150,7 +143,6 @@ async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
 
-# --- /resources command ---
 async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         data = supabase.table("resources").select("title,link").execute()
@@ -168,29 +160,24 @@ async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
 
-# --- /rules command ---
 async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Community Rules: {RULES_LINK}")
 
-# --- Welcome new members ---
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for member in update.message.new_chat_members:
         if member.is_bot:
             continue
         await update.message.reply_text(WELCOME)
 
-# --- Farewell members ---
 async def farewell_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     left_member = update.message.left_chat_member
     if not left_member.is_bot:
         await update.message.reply_text(FAREWELL)
 
-# --- Keyword-based replies ---
 KEYWORD_RESPONSES = [
     ("help", "If you need a hand, just type /ask followed by your question! Aurion's got your back."),
     ("motivate", "You’re stronger than you think, Champ! Every step counts."),
     ("thanks", "Anytime, Champ! Let’s keep that good energy rolling!"),
-    # Add more as you wish
 ]
 
 async def keyword_responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -200,7 +187,6 @@ async def keyword_responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(response)
             break
 
-# --- Bot commands ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     if not has_greeted(user_id):
@@ -247,11 +233,9 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             ensure_signoff_once(f"Sorry Champ, Aurion hit a snag getting your answer. Error details: {e}", SIGNOFF)
         )
 
-# --- /id card command ---
 async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Check out our digital 3C /id card: https://anica-blip.github.io/3c-links/")
 
-# --- /help command with 'guidance' reference and resources mention ---
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Let me know exactly what you're looking for so that I can guide you.\n\n"
@@ -266,7 +250,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Or just type your question!"
     )
 
-# --- /topics command with custom list ---
 TOPICS_LIST = [
     ("Aurion Gems", "https://t.me/c/2377255109/138"),
     ("ClubHouse Chatroom", "https://t.me/c/2377255109/10"),
@@ -287,7 +270,6 @@ async def topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join(msg_lines)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# --- /hashtags command with custom list ---
 HASHTAGS_LIST = [
     ("#Topics", "https://t.me/c/2431571054/58"),
     ("#Blog", "https://t.me/c/2431571054/58"),
@@ -305,15 +287,41 @@ async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join(msg_lines)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# --- Error handler ---
+async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
+    now_utc = datetime.now(timezone.utc).isoformat()
+    try:
+        result = supabase.table("message").select("*").lte("scheduled_at", now_utc).is_("sent", False).execute()
+        messages = result.data or []
+    except Exception as e:
+        logger.error(f"Supabase error in get_due_messages: {e}")
+        return
+
+    for msg in messages:
+        group_key = msg.get("group_channel")
+        chat_id = GROUP_CHAT_IDS.get(group_key)
+        content = msg.get("content")
+        if not group_key or chat_id is None or not content:
+            continue
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=content)
+        except Exception as e:
+            logger.error(f"Failed to send message: {e}")
+        try:
+            supabase.table("message").update({"sent": True}).eq("id", msg["id"]).execute()
+        except Exception as e:
+            logger.error(f"Failed to mark message as sent: {e}")
+
 import traceback
 async def error_handler(update, context):
     logger.error("Exception while handling an update:\n%s", traceback.format_exc())
-    if context.error:
-        logger.error("Actual exception: %s", context.error)
+
+def schedule_daily_jobs(job_queue):
+    # UTC times: 08:00, 12:00, 17:00, 21:00
+    times = [time(8, 0), time(12, 0), time(17, 0), time(21, 0)]
+    for t in times:
+        job_queue.run_daily(send_due_messages_job, t, days=(0,1,2,3,4,5,6))
 
 def main():
-    print(">>> Aurion main.py is running!")
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
         logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
         return
@@ -335,15 +343,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
     app.add_error_handler(error_handler)
 
-    # --- Schedule send_due_messages_job at 08:00, 12:00, 17:00, 21:00 UTC ---
-    target_hours = [8, 12, 17, 21]
-    for hour in target_hours:
-        app.job_queue.run_daily(
-            send_due_messages_job,
-            time=dt_time(hour=hour, minute=0, tzinfo=timezone.utc),
-            data=supabase,
-            name=f"send_due_messages_at_{hour:02d}00"
-        )
+    # Schedule the job at the exact times requested
+    schedule_daily_jobs(app.job_queue)
 
     print("Aurion is polling. Press Ctrl+C to stop.")
     app.run_polling()
