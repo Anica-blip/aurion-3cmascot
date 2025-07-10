@@ -308,7 +308,7 @@ async def send_due_messages_job(context):
     supabase = context.job.data
     now_utc = datetime.now(timezone.utc).isoformat()
     try:
-        # Use the correct column name!
+        # Fixed: Use the correct column name 'scheduled_at'
         result = supabase.table("message").select("*").lte("scheduled_at", now_utc).is_("sent", False).execute()
         messages = result.data or []
     except Exception as e:
