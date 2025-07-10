@@ -287,20 +287,20 @@ async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join(msg_lines)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# ------- ENHANCED SCHEDULED JOB BELOW --------
+# ----------- SCHEDULED JOB: Maximum logging for diagnostics -----------
 async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
     now_utc = datetime.now(timezone.utc).isoformat()
-    logger.info(f"[ScheduledJob] Running at {now_utc}")
+    logger.info(f"[SCHEDULED JOB] Triggered at {now_utc}")
     try:
         result = supabase.table("message").select("*").lte("scheduled_at", now_utc).is_("sent", False).execute()
         messages = result.data or []
-        logger.info(f"[ScheduledJob] Found {len(messages)} due messages.")
+        logger.info(f"[SCHEDULED JOB] Found {len(messages)} messages due to be sent at or before {now_utc}")
     except Exception as e:
-        logger.error(f"[ScheduledJob] Supabase error in get_due_messages: {e}")
+        logger.error(f"[SCHEDULED JOB] Supabase error: {e}")
         return
 
     if not messages:
-        logger.info("[ScheduledJob] No due messages to send.")
+        logger.info("[SCHEDULED JOB] No due messages to send.")
         return
 
     for msg in messages:
@@ -308,21 +308,21 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
         chat_id = GROUP_CHAT_IDS.get(group_key)
         content = msg.get("content")
         msg_id = msg.get("id")
-        logger.info(f"[ScheduledJob] Processing message id={msg_id}, group_key={group_key}, chat_id={chat_id}, content={content!r}")
+        logger.info(f"[SCHEDULED JOB] Processing message id={msg_id}, group_channel={group_key}, chat_id={chat_id}, content={content!r}")
         if not group_key or chat_id is None or not content:
-            logger.error(f"[ScheduledJob] Skipping message id={msg_id}: missing group_channel, chat_id, or content")
+            logger.error(f"[SCHEDULED JOB] Skipping message id={msg_id}: missing group_channel, chat_id, or content")
             continue
         try:
             await context.bot.send_message(chat_id=chat_id, text=content)
-            logger.info(f"[ScheduledJob] Sent message id={msg_id} to chat_id={chat_id}")
+            logger.info(f"[SCHEDULED JOB] Sent message id={msg_id} to chat_id={chat_id}")
         except Exception as e:
-            logger.error(f"[ScheduledJob] Failed to send message id={msg_id}: {e}")
+            logger.error(f"[SCHEDULED JOB] Failed to send message id={msg_id}: {e}")
             continue
         try:
             supabase.table("message").update({"sent": True}).eq("id", msg_id).execute()
-            logger.info(f"[ScheduledJob] Marked message id={msg_id} as sent in DB")
+            logger.info(f"[SCHEDULED JOB] Marked message id={msg_id} as sent in DB")
         except Exception as e:
-            logger.error(f"[ScheduledJob] Failed to mark message id={msg_id} as sent: {e}")
+            logger.error(f"[SCHEDULED JOB] Failed to mark message id={msg_id} as sent: {e}")
 
 import traceback
 async def error_handler(update, context):
