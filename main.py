@@ -14,6 +14,7 @@ from telegram.ext import (
 )
 from openai import OpenAI
 from supabase import create_client, Client
+import traceback
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -340,9 +341,14 @@ async def sendnow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_due_messages_job(context)
     await update.message.reply_text("Triggered the scheduled job manually.")
 
-import traceback
+# ----------- ERROR HANDLER: Logs full traceback -----------
 async def error_handler(update, context):
-    logger.error("Exception while handling an update:\n%s", traceback.format_exc())
+    logger.error("Exception while handling an update:", exc_info=context.error)
+    if context.error:
+        tb_str = ''.join(traceback.format_exception(None, context.error, context.error.__traceback__))
+        logger.error(f"Traceback:\n{tb_str}")
+    else:
+        logger.error("No exception information available (context.error is None)")
 
 def main():
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
