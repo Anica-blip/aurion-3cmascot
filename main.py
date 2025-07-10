@@ -2,7 +2,7 @@ import os
 import logging
 import random
 import re
-from datetime import datetime, timezone, time, timedelta
+from datetime import datetime, timezone, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -289,12 +289,16 @@ async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ----------- SCHEDULED JOB: Maximum logging for diagnostics -----------
 async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
-    now_utc = datetime.now(timezone.utc).isoformat()
-    logger.info(f"[SCHEDULED JOB] Triggered at {now_utc}")
+    now_utc = datetime.now(timezone.utc)
+    now_utc_str = now_utc.isoformat()
+    logger.info(f"[SCHEDULED JOB] Triggered at {now_utc_str}")
+
     try:
-        result = supabase.table("message").select("*").lte("scheduled_at", now_utc).is_("sent", False).execute()
+        logger.info(f"[SCHEDULED JOB] Query: SELECT * FROM message WHERE scheduled_at <= '{now_utc_str}' AND sent = false")
+        result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).is_("sent", False).execute()
+        logger.info(f"[SCHEDULED JOB] Raw Supabase result: {result}")
         messages = result.data or []
-        logger.info(f"[SCHEDULED JOB] Found {len(messages)} messages due to be sent at or before {now_utc}")
+        logger.info(f"[SCHEDULED JOB] Found {len(messages)} messages due at or before {now_utc_str}")
     except Exception as e:
         logger.error(f"[SCHEDULED JOB] Supabase error: {e}")
         return
@@ -324,15 +328,15 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"[SCHEDULED JOB] Failed to mark message id={msg_id} as sent: {e}")
 
-import traceback
-async def error_handler(update, context):
-    logger.error("Exception while handling an update:\n%s", traceback.format_exc())
-
 def schedule_daily_jobs(job_queue):
     # UTC times: 08:00, 12:00, 17:00, 21:00
     times = [time(8, 0), time(12, 0), time(17, 0), time(21, 0)]
     for t in times:
         job_queue.run_daily(send_due_messages_job, t, days=(0,1,2,3,4,5,6))
+
+import traceback
+async def error_handler(update, context):
+    logger.error("Exception while handling an update:\n%s", traceback.format_exc())
 
 def main():
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
