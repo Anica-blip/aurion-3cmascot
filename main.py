@@ -308,8 +308,8 @@ async def send_due_messages_job(context):
     supabase = context.job.data
     now_utc = datetime.now(timezone.utc).isoformat()
     try:
-        # Get messages due to be sent (scheduled time passed and not sent yet)
-        result = supabase.table("message").select("*").lte("schedule_at", now_utc).is_("sent", False).execute()
+        # Use the correct column name!
+        result = supabase.table("message").select("*").lte("scheduled_at", now_utc).is_("sent", False).execute()
         messages = result.data or []
     except Exception as e:
         logger.error(f"Supabase error in get_due_messages: {e}")
@@ -331,11 +331,9 @@ async def send_due_messages_job(context):
             logger.error(f"Failed to mark message as sent: {e}")
 
 # --- Error handler ---
+import traceback
 async def error_handler(update, context):
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
-    # Optionally send a message to admins or the user
-    # if update and getattr(update, "message", None):
-    #     await update.message.reply_text("Sorry, something went wrong.")
+    logger.error("Exception while handling an update:\n%s", traceback.format_exc())
 
 def main():
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
