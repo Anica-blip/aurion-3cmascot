@@ -273,24 +273,23 @@ TOPICS_LIST = [
     ("3C LEVEL 2", "https://t.me/c/2377255109/347"),
 ]
 
-async def topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Please press this /topics and the list below should be the response after pressing /topics")
-    msg_lines = []
-    for idx, (title, url) in enumerate(TOPICS_LIST, 1):
-        msg_lines.append(f"{idx}) [{title}]({url})")
+async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Please press this /hashtags and the list below should be the response after pressing /hashtags")
+    msg_lines = [f"[{title}]({link})" for title, link in HASHTAGS_LIST]
     msg = "\n".join(msg_lines)
     await update.message.reply_text(msg, parse_mode="Markdown")
+    )
 
 # --- /hashtags command with custom list ---
 HASHTAGS_LIST = [
-    "#Topics", "https://t.me/c/2431571054/58",
-    "#Blog", "https://t.me/c/2431571054/58",
-    "#Provisions", "https://t.me/c/2431571054/58",
-    "#Training", "https://t.me/c/2431571054/58",
-    "#Knowledge", "https://t.me/c/2431571054/58",
-    "#Language", "https://t.me/c/2431571054/58",
-    "#Audiobook", "https://t.me/c/2431571054/58", 
-    "#Healingmusic", "https://t.me/c/2431571054/58",
+    ("#Topics", "https://t.me/c/2431571054/58"),
+    ("#Blog", "https://t.me/c/2431571054/58"),
+    ("#Provisions", "https://t.me/c/2431571054/58"),
+    ("#Training", "https://t.me/c/2431571054/58"),
+    ("#Knowledge", "https://t.me/c/2431571054/58"),
+    ("#Language", "https://t.me/c/2431571054/58"),
+    ("#Audiobook", "https://t.me/c/2431571054/58"), 
+    ("#Healingmusic", "https://t.me/c/2431571054/58"),
 ]
 
 async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
