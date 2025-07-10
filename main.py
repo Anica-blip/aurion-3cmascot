@@ -287,15 +287,15 @@ async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join(msg_lines)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# ----------- SCHEDULED JOB: Maximum logging for diagnostics -----------
+# ----------- SCHEDULED JOB: Checks and sends due messages -----------
 async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
     now_utc = datetime.now(timezone.utc)
     now_utc_str = now_utc.isoformat()
     logger.info(f"[SCHEDULED JOB] Triggered at {now_utc_str}")
 
     try:
+        # Query all messages that are due and not sent
         result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).is_("sent", False).execute()
-        logger.info(f"[SCHEDULED JOB] Raw Supabase result: {result}")
         messages = result.data or []
         logger.info(f"[SCHEDULED JOB] Found {len(messages)} messages due at or before {now_utc_str}")
     except Exception as e:
@@ -327,13 +327,15 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"[SCHEDULED JOB] Failed to mark message id={msg_id} as sent: {e}")
 
+# ----------- SCHEDULER SETUP: Four times daily, every day -----------
 def schedule_daily_jobs(job_queue):
-    # UTC times: 08:00, 12:00, 17:00, 21:00
+    # UTC times: 08:00, 12:00, 17:00, 21:00, every day
     times = [time(8, 0), time(12, 0), time(17, 0), time(21, 0)]
     for t in times:
         job_queue.run_daily(send_due_messages_job, t, days=(0,1,2,3,4,5,6))
+    logger.info("[SCHEDULER] Jobs scheduled for 08:00, 12:00, 17:00, 21:00 UTC (every day)")
 
-# --- MANUAL TRIGGER FOR DEBUGGING ---
+# ----------- MANUAL TRIGGER: /sendnow in Telegram -----------
 async def sendnow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_due_messages_job(context)
     await update.message.reply_text("Triggered the scheduled job manually.")
