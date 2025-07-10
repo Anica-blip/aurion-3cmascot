@@ -29,10 +29,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Updated: group 2 now includes thread_id=10 for posting to the correct topic
 GROUP_POST_TARGETS = {
-    "group 1": {"chat_id": -1002393705231, "thread_id": None},
-    "group 2": {"chat_id": -1002377255109, "thread_id": 10},
+    "group 1": {"chat_id": -1002393705231},
+    "group 2": {"chat_id": -1002377255109},
 }
 
 processing_messages = [
@@ -289,6 +288,14 @@ async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join(msg_lines)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
+def extract_message_thread_id(link):
+    """Extracts the numeric thread ID from a Telegram topic link."""
+    if link and isinstance(link, str):
+        match = re.search(r'/c/\d+/(?P<topicid>\d+)', link)
+        if match:
+            return int(match.group('topicid'))
+    return None
+
 # ----------- SCHEDULED JOB: Checks and sends due messages -----------
 async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
     now_utc = datetime.now(timezone.utc)
@@ -315,18 +322,19 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
         content = msg.get("content")
         msg_id = msg.get("id")
         chat_id = post_target["chat_id"] if post_target else None
-        thread_id = post_target["thread_id"] if post_target else None
+        thread_link = msg.get("thread_id")  # This is a link or None
+        message_thread_id = extract_message_thread_id(thread_link)
 
-        logger.info(f"[SCHEDULED JOB] Processing message id={msg_id}, group_channel={group_key}, chat_id={chat_id}, thread_id={thread_id}, content={content!r}")
+        logger.info(f"[SCHEDULED JOB] Processing message id={msg_id}, group_channel={group_key}, chat_id={chat_id}, thread_link={thread_link}, message_thread_id={message_thread_id}, content={content!r}")
         if not post_target or not content:
             logger.error(f"[SCHEDULED JOB] Skipping message id={msg_id}: missing group_channel or content")
             continue
         try:
-            if thread_id is not None:
-                await context.bot.send_message(chat_id=chat_id, text=content, message_thread_id=thread_id)
+            if message_thread_id:
+                await context.bot.send_message(chat_id=chat_id, text=content, message_thread_id=message_thread_id)
             else:
                 await context.bot.send_message(chat_id=chat_id, text=content)
-            logger.info(f"[SCHEDULED JOB] Sent message id={msg_id} to chat_id={chat_id}, thread_id={thread_id}")
+            logger.info(f"[SCHEDULED JOB] Sent message id={msg_id} to chat_id={chat_id}, message_thread_id={message_thread_id}")
         except Exception as e:
             logger.error(f"[SCHEDULED JOB] Failed to send message id={msg_id}: {e}")
             continue
