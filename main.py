@@ -352,13 +352,13 @@ from datetime import timezone as dt_timezone
 def schedule_daily_jobs(job_queue):
     # Schedule jobs at 08:00, 12:00, 17:00, 21:00 UTC every day
     times = [
-        time(8, 0, tzinfo=dt_timezone.utc),
-        time(12, 0, tzinfo=dt_timezone.utc),
-        time(17, 0, tzinfo=dt_timezone.utc),
-        time(21, 0, tzinfo=dt_timezone.utc)
+        time(8, 0, tzinfo=timezone.utc),
+        time(12, 0, tzinfo=timezone.utc),
+        time(17, 0, tzinfo=timezone.utc),
+        time(21, 0, tzinfo=timezone.utc)
     ]
     for t in times:
-        job_queue.run_daily(send_due_messages_job, t, days=(0,1,2,3,4,5,6), timezone=dt_timezone.utc)
+        job_queue.run_daily(send_due_messages_job, t, days=(0,1,2,3,4,5,6))
     logger.info("[SCHEDULER] Jobs scheduled for 08:00, 12:00, 17:00, 21:00 UTC (every day, UTC aware)")
 
 # ----------- MANUAL TRIGGER: /sendnow in Telegram -----------
