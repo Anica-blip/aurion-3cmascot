@@ -294,7 +294,6 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"[SCHEDULED JOB] Triggered at {now_utc_str}")
 
     try:
-        logger.info(f"[SCHEDULED JOB] Query: SELECT * FROM message WHERE scheduled_at <= '{now_utc_str}' AND sent = false")
         result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).is_("sent", False).execute()
         logger.info(f"[SCHEDULED JOB] Raw Supabase result: {result}")
         messages = result.data or []
@@ -334,6 +333,11 @@ def schedule_daily_jobs(job_queue):
     for t in times:
         job_queue.run_daily(send_due_messages_job, t, days=(0,1,2,3,4,5,6))
 
+# --- MANUAL TRIGGER FOR DEBUGGING ---
+async def sendnow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_due_messages_job(context)
+    await update.message.reply_text("Triggered the scheduled job manually.")
+
 import traceback
 async def error_handler(update, context):
     logger.error("Exception while handling an update:\n%s", traceback.format_exc())
@@ -358,11 +362,10 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
+    app.add_handler(CommandHandler("sendnow", sendnow))
     app.add_error_handler(error_handler)
 
-    # Schedule the job at the exact times requested
     schedule_daily_jobs(app.job_queue)
-
     print("Aurion is polling. Press Ctrl+C to stop.")
     app.run_polling()
 
