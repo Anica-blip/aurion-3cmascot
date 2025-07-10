@@ -347,12 +347,16 @@ async def error_handler(update, context):
     if context.error:
         tb_str = ''.join(traceback.format_exception(None, context.error, context.error.__traceback__))
         logger.error(f"Traceback:\n{tb_str}")
+        print("Exception while handling an update:", context.error)
+        print(tb_str)
     else:
         logger.error("No exception information available (context.error is None)")
+        print("No exception information available (context.error is None)")
 
 def main():
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
         logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
+        print("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
         return
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
