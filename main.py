@@ -278,7 +278,6 @@ async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_lines = [f"[{title}]({link})" for title, link in HASHTAGS_LIST]
     msg = "\n".join(msg_lines)
     await update.message.reply_text(msg, parse_mode="Markdown")
-    )
 
 # --- /hashtags command with custom list ---
 HASHTAGS_LIST = [
