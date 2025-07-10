@@ -308,7 +308,6 @@ async def send_due_messages_job(context):
     supabase = context.job.data
     now_utc = datetime.now(timezone.utc).isoformat()
     try:
-        # Fixed: Use the correct column name 'scheduled_at'
         result = supabase.table("message").select("*").lte("scheduled_at", now_utc).is_("sent", False).execute()
         messages = result.data or []
     except Exception as e:
@@ -334,8 +333,11 @@ async def send_due_messages_job(context):
 import traceback
 async def error_handler(update, context):
     logger.error("Exception while handling an update:\n%s", traceback.format_exc())
+    if context.error:
+        logger.error("Actual exception: %s", context.error)
 
 def main():
+    print(">>> Aurion main.py is running!")
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
         logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
         return
