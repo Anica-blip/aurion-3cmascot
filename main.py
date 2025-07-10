@@ -13,9 +13,7 @@ from telegram.ext import (
 )
 from openai import OpenAI
 from supabase import create_client, Client
-
-# --- Scheduled Supabase message job ---
-from aurion_extras import send_due_messages_job
+from datetime import datetime, timezone
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -29,6 +27,13 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# --- Group/channel keys to Telegram chat IDs ---
+GROUP_CHAT_IDS = {
+    "group 1": -1002393705231,    # Replace with actual group/channel names and IDs
+    "group 2": -1002377255109,
+    # Add more as needed
+}
 
 processing_messages = [
     "Hey Champ, give me a second to help you with that!",
@@ -273,9 +278,10 @@ TOPICS_LIST = [
     ("3C LEVEL 2", "https://t.me/c/2377255109/347"),
 ]
 
-async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Please press this /hashtags and the list below should be the response after pressing /hashtags")
-    msg_lines = [f"[{title}]({link})" for title, link in HASHTAGS_LIST]
+async def topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg_lines = []
+    for idx, (title, url) in enumerate(TOPICS_LIST, 1):
+        msg_lines.append(f"{idx}) [{title}]({url})")
     msg = "\n".join(msg_lines)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
@@ -293,10 +299,45 @@ HASHTAGS_LIST = [
 
 async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Please press this /hashtags and the list below should be the response after pressing /hashtags")
-    msg = "\n".join([h[0] for h in HASHTAGS_LIST])
-    await update.message.reply_text(msg)
+    msg_lines = [f"[{title}]({link})" for title, link in HASHTAGS_LIST]
+    msg = "\n".join(msg_lines)
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
-# --- Schedule Supabase job to run after initialization ---
+# --- Scheduled Supabase message job ---
+async def send_due_messages_job(context):
+    supabase = context.job.data
+    now_utc = datetime.now(timezone.utc).isoformat()
+    try:
+        # Get messages due to be sent (scheduled time passed and not sent yet)
+        result = supabase.table("message").select("*").lte("schedule_at", now_utc).is_("sent", False).execute()
+        messages = result.data or []
+    except Exception as e:
+        logger.error(f"Supabase error in get_due_messages: {e}")
+        return
+
+    for msg in messages:
+        group_key = msg.get("group_channel")
+        chat_id = GROUP_CHAT_IDS.get(group_key)
+        content = msg.get("content")
+        if not group_key or chat_id is None or not content:
+            continue
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=content)
+        except Exception as e:
+            logger.error(f"Failed to send message: {e}")
+        try:
+            supabase.table("message").update({"sent": True}).eq("id", msg["id"]).execute()
+        except Exception as e:
+            logger.error(f"Failed to mark message as sent: {e}")
+
+# --- Error handler ---
+async def error_handler(update, context):
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    # Optionally send a message to admins or the user
+    # if update and getattr(update, "message", None):
+    #     await update.message.reply_text("Sorry, something went wrong.")
+
+# --- Post-init for job scheduling ---
 async def post_init(application):
     application.job_queue.run_repeating(
         send_due_messages_job, interval=60, first=10, data=supabase
@@ -322,6 +363,7 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
+    app.add_error_handler(error_handler)
     print("Aurion is polling. Press Ctrl+C to stop.")
     app.run_polling()
 
