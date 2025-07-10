@@ -337,12 +337,6 @@ async def error_handler(update, context):
     # if update and getattr(update, "message", None):
     #     await update.message.reply_text("Sorry, something went wrong.")
 
-# --- Post-init for job scheduling ---
-async def post_init(application):
-    application.job_queue.run_repeating(
-        send_due_messages_job, interval=60, first=10, data=supabase
-    )
-
 def main():
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
         logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
@@ -364,6 +358,10 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
     app.add_error_handler(error_handler)
+
+    # --- Scheduled message job: runs every minute ---
+    app.job_queue.run_repeating(send_due_messages_job, interval=60, first=10, data=supabase)
+
     print("Aurion is polling. Press Ctrl+C to stop.")
     app.run_polling()
 
