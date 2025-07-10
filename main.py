@@ -13,7 +13,9 @@ from telegram.ext import (
 )
 from openai import OpenAI
 from supabase import create_client, Client
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time as dt_time
+
+from aurion_extras import send_due_messages_job  # <-- IMPORTED JOB LOGIC
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -303,32 +305,6 @@ async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "\n".join(msg_lines)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# --- Scheduled Supabase message job ---
-async def send_due_messages_job(context):
-    supabase = context.job.data
-    now_utc = datetime.now(timezone.utc).isoformat()
-    try:
-        result = supabase.table("message").select("*").lte("scheduled_at", now_utc).is_("sent", False).execute()
-        messages = result.data or []
-    except Exception as e:
-        logger.error(f"Supabase error in get_due_messages: {e}")
-        return
-
-    for msg in messages:
-        group_key = msg.get("group_channel")
-        chat_id = GROUP_CHAT_IDS.get(group_key)
-        content = msg.get("content")
-        if not group_key or chat_id is None or not content:
-            continue
-        try:
-            await context.bot.send_message(chat_id=chat_id, text=content)
-        except Exception as e:
-            logger.error(f"Failed to send message: {e}")
-        try:
-            supabase.table("message").update({"sent": True}).eq("id", msg["id"]).execute()
-        except Exception as e:
-            logger.error(f"Failed to mark message as sent: {e}")
-
 # --- Error handler ---
 import traceback
 async def error_handler(update, context):
@@ -359,8 +335,15 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
     app.add_error_handler(error_handler)
 
-    # --- Scheduled message job: runs every minute ---
-    app.job_queue.run_repeating(send_due_messages_job, interval=60, first=10, data=supabase)
+    # --- Schedule send_due_messages_job at 08:00, 12:00, 17:00, 21:00 UTC ---
+    target_hours = [8, 12, 17, 21]
+    for hour in target_hours:
+        app.job_queue.run_daily(
+            send_due_messages_job,
+            time=dt_time(hour=hour, minute=0, tzinfo=timezone.utc),
+            data=supabase,
+            name=f"send_due_messages_at_{hour:02d}00"
+        )
 
     print("Aurion is polling. Press Ctrl+C to stop.")
     app.run_polling()
