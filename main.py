@@ -29,9 +29,10 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-GROUP_CHAT_IDS = {
-    "group 1": -1002393705231,
-    "group 2": -1002377255109,
+# Updated: group 2 now includes thread_id=10 for posting to the correct topic
+GROUP_POST_TARGETS = {
+    "group 1": {"chat_id": -1002393705231, "thread_id": None},
+    "group 2": {"chat_id": -1002377255109, "thread_id": 10},
 }
 
 processing_messages = [
@@ -299,6 +300,7 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
         result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).is_("sent", False).execute()
         messages = result.data or []
         logger.info(f"[SCHEDULED JOB] Found {len(messages)} messages due at or before {now_utc_str}")
+        logger.info(f"[SCHEDULED JOB] Fetched messages: {messages}")
     except Exception as e:
         logger.error(f"[SCHEDULED JOB] Supabase error: {e}")
         return
@@ -309,32 +311,47 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
 
     for msg in messages:
         group_key = msg.get("group_channel")
-        chat_id = GROUP_CHAT_IDS.get(group_key)
+        post_target = GROUP_POST_TARGETS.get(group_key)
         content = msg.get("content")
         msg_id = msg.get("id")
-        logger.info(f"[SCHEDULED JOB] Processing message id={msg_id}, group_channel={group_key}, chat_id={chat_id}, content={content!r}")
-        if not group_key or chat_id is None or not content:
-            logger.error(f"[SCHEDULED JOB] Skipping message id={msg_id}: missing group_channel, chat_id, or content")
+        chat_id = post_target["chat_id"] if post_target else None
+        thread_id = post_target["thread_id"] if post_target else None
+
+        logger.info(f"[SCHEDULED JOB] Processing message id={msg_id}, group_channel={group_key}, chat_id={chat_id}, thread_id={thread_id}, content={content!r}")
+        if not post_target or not content:
+            logger.error(f"[SCHEDULED JOB] Skipping message id={msg_id}: missing group_channel or content")
             continue
         try:
-            await context.bot.send_message(chat_id=chat_id, text=content)
-            logger.info(f"[SCHEDULED JOB] Sent message id={msg_id} to chat_id={chat_id}")
+            if thread_id is not None:
+                await context.bot.send_message(chat_id=chat_id, text=content, message_thread_id=thread_id)
+            else:
+                await context.bot.send_message(chat_id=chat_id, text=content)
+            logger.info(f"[SCHEDULED JOB] Sent message id={msg_id} to chat_id={chat_id}, thread_id={thread_id}")
         except Exception as e:
             logger.error(f"[SCHEDULED JOB] Failed to send message id={msg_id}: {e}")
             continue
         try:
-            supabase.table("message").update({"sent": True}).eq("id", msg_id).execute()
-            logger.info(f"[SCHEDULED JOB] Marked message id={msg_id} as sent in DB")
+            result = supabase.table("message").update({"sent": True}).eq("id", msg_id).execute()
+            logger.info(f"[SCHEDULED JOB] Update result for id={msg_id}: {result.data}")
+            if not result.data:
+                logger.error(f"[SCHEDULED JOB] Update failed for id={msg_id}. Check field types, RLS, and permissions.")
         except Exception as e:
-            logger.error(f"[SCHEDULED JOB] Failed to mark message id={msg_id} as sent: {e}")
+            logger.error(f"[SCHEDULED JOB] Update exception for id={msg_id}: {e}")
 
-# ----------- SCHEDULER SETUP: Four times daily, every day -----------
+# ----------- SCHEDULER SETUP: Four times daily, every day - UTC Aware -----------
+from datetime import timezone as dt_timezone
+
 def schedule_daily_jobs(job_queue):
-    # UTC times: 08:00, 12:00, 17:00, 21:00, every day
-    times = [time(8, 0), time(12, 0), time(17, 0), time(21, 0)]
+    # Schedule jobs at 08:00, 12:00, 17:00, 21:00 UTC every day
+    times = [
+        time(8, 0, tzinfo=dt_timezone.utc),
+        time(12, 0, tzinfo=dt_timezone.utc),
+        time(17, 0, tzinfo=dt_timezone.utc),
+        time(21, 0, tzinfo=dt_timezone.utc)
+    ]
     for t in times:
-        job_queue.run_daily(send_due_messages_job, t, days=(0,1,2,3,4,5,6))
-    logger.info("[SCHEDULER] Jobs scheduled for 08:00, 12:00, 17:00, 21:00 UTC (every day)")
+        job_queue.run_daily(send_due_messages_job, t, days=(0,1,2,3,4,5,6), timezone=dt_timezone.utc)
+    logger.info("[SCHEDULER] Jobs scheduled for 08:00, 12:00, 17:00, 21:00 UTC (every day, UTC aware)")
 
 # ----------- MANUAL TRIGGER: /sendnow in Telegram -----------
 async def sendnow(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -358,6 +375,14 @@ def main():
         logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
         print("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
         return
+
+    import time as pytime
+    from datetime import datetime
+    print("Server local time:", pytime.strftime("%Y-%m-%d %H:%M:%S", pytime.localtime()))
+    print("Server UTC time:", pytime.strftime("%Y-%m-%d %H:%M:%S", pytime.gmtime()))
+    print("Python datetime.now():", datetime.now())
+    print("Python datetime.now(timezone.utc):", datetime.now(timezone.utc))
+    print("TZ environment variable:", os.environ.get("TZ"))
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
