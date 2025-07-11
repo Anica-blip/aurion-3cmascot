@@ -16,6 +16,9 @@ from openai import OpenAI
 from supabase import create_client, Client
 import traceback
 
+# === AURION BOT VERSION TEST 2025-07-11 ===
+print("=== AURION BOT VERSION TEST 2025-07-11 ===")
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -317,6 +320,7 @@ def parse_targets_from_message(text):
 
 # ------------------ REPLY /to REPOST FUNCTIONALITY -----------------------
 async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("AURION BOT VERSION TEST: content_center_listener was called")
     message = update.message
     logger.info(f"content_center_listener: user={update.effective_user.id} chat={update.effective_chat.id} text={getattr(message,'text', None)} caption={getattr(message, 'caption', None)}")
 
