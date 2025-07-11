@@ -388,9 +388,46 @@ async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_
 from datetime import timezone as dt_timezone
 
 async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
-    # Restore your scheduled posting logic here if you use scheduled posts.
-    # If you don't use scheduled posts, you can leave this as a pass.
-    pass
+    now_utc = datetime.now(timezone.utc)
+    now_utc_str = now_utc.isoformat()
+    try:
+        # Fetch all unsent messages scheduled up to now
+        result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).eq("sent", False).execute()
+        messages = result.data or []
+    except Exception as e:
+        logger.error(f"[SCHEDULED JOB] Supabase error: {e}")
+        return
+
+    if not messages:
+        logger.info("[SCHEDULED JOB] No pending scheduled posts.")
+        return
+
+    for msg in messages:
+        group_key = msg.get("group_channel")
+        post_target = GROUP_POST_TARGETS.get(group_key)
+        content = msg.get("content")
+        msg_id = msg.get("id")
+        chat_id = post_target["chat_id"] if post_target else None
+        thread_link = msg.get("thread_id")
+        message_thread_id = extract_message_thread_id(thread_link)
+        if not post_target or not content:
+            logger.warning(f"[SCHEDULED JOB] Skipping message id={msg_id}: missing target or content.")
+            continue
+        try:
+            if message_thread_id:
+                await context.bot.send_message(chat_id=chat_id, text=content, message_thread_id=message_thread_id)
+            else:
+                await context.bot.send_message(chat_id=chat_id, text=content)
+            logger.info(f"[SCHEDULED JOB] Sent message id={msg_id} to {group_key}")
+        except Exception as e:
+            logger.error(f"[SCHEDULED JOB] Failed to send message id={msg_id}: {e}")
+            continue
+        try:
+            supabase.table("message").update({"sent": True}).eq("id", msg_id).execute()
+        except Exception as e:
+            logger.error(f"[SCHEDULED JOB] Update exception for id={msg_id}: {e}")
+
+    logger.info("[SCHEDULED JOB] All pending scheduled posts processed.")
 
 def schedule_daily_jobs(job_queue):
     times = [
@@ -407,7 +444,7 @@ async def sendnow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now_utc = datetime.now(timezone.utc)
     now_utc_str = now_utc.isoformat()
     try:
-        result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).is_("sent", False).execute()
+        result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).eq("sent", False).execute()
         messages = result.data or []
     except Exception as e:
         logger.error(f"[SENDNOW] Supabase error: {e}")
