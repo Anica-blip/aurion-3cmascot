@@ -315,97 +315,75 @@ def parse_targets_from_message(text):
     return None
 
 async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Debug print to verify handler entry and update structure
-    print(
-        f"Handler triggered: user={getattr(update.effective_user, 'id', None)}, "
-        f"chat={getattr(update.effective_chat, 'id', None)}, "
-        f"text={getattr(getattr(update, 'message', None), 'text', None)!r}, "
-        f"caption={getattr(getattr(update, 'message', None), 'caption', None)!r}"
-    )
-
-    if not update.effective_chat or not update.effective_user:
-        logger.warning("Update missing effective_chat or effective_user: %r", update)
-        return
-
-    if update.effective_chat.id != AURION_CONTENT_CENTER_CHAT_ID:
-        return
-    if update.effective_user.id not in ADMIN_USER_IDS:
-        if update.message:
-            await update.message.reply_text("Sorry, only admins can trigger Aurion reposting.")
-        return
-
+    """
+    Listen for /to ... commands as replies to messages. 
+    When detected, repost the replied-to message to the specified targets as the bot.
+    """
     message = update.message
-    if not message:
-        logger.warning("No message in update for content_center_listener: %r", update)
+
+    # Only proceed if this is a reply and starts with /to
+    if not (message and message.reply_to_message and message.text and message.text.lower().startswith('/to ')):
         return
 
-    # New logic: support /to ... as reply to previous message, or as first line in a new message/caption
-    targets = None
-    repost_text = None
-    repost_photo = None
-    repost_video = None
-    repost_document = None
+    # Only allow from ADMIN_USER_IDS in AURION_CONTENT_CENTER_CHAT_ID
+    if update.effective_chat.id != AURION_CONTENT_CENTER_CHAT_ID or update.effective_user.id not in ADMIN_USER_IDS:
+        if message:
+            await message.reply_text("Sorry, only admins can trigger Aurion reposting.")
+        return
 
-    # Case 1: /to ... as a reply to another message
-    if message.reply_to_message and (message.text and message.text.strip().lower().startswith('/to ')):
-        targets = parse_targets_from_message(message.text)
-        # Use the replied-to message's content/media/caption
-        source_message = message.reply_to_message
-        repost_text = source_message.text or source_message.caption or ""
-        repost_photo = source_message.photo
-        repost_video = source_message.video
-        repost_document = source_message.document
-    else:
-        # Case 2: /to ... as first line of a new message/caption
-        text = message.text or message.caption or ""
-        targets = parse_targets_from_message(text)
-        # Remove the '/to ...' line from text/caption if present
-        if targets:
-            text = re.sub(r'^\/to\s+.+(\n|$)', '', text, flags=re.IGNORECASE).lstrip()
-        repost_text = text
-        repost_photo = message.photo
-        repost_video = message.video
-        repost_document = message.document
+    # Parse target groups/channels
+    targets = parse_targets_from_message(message.text)
+    if not targets:
+        await message.reply_text("Please specify at least one valid group/channel in your /to command.")
+        return
 
-    # Decide where to post
-    if targets:
-        chosen_targets = {k: v for k, v in GROUP_POST_TARGETS.items() if k.lower() in targets}
-    else:
-        chosen_targets = GROUP_POST_TARGETS
+    # Gather original message content
+    source_message = message.reply_to_message
+    repost_text = source_message.text or source_message.caption or ""
+    repost_photo = source_message.photo
+    repost_video = source_message.video
+    repost_document = source_message.document
+
+    chosen_targets = {k: v for k, v in GROUP_POST_TARGETS.items() if k.lower() in targets}
+    if not chosen_targets:
+        await message.reply_text("No valid targets found. Please check your /to command.")
+        return
 
     results = []
     for group_key, target in chosen_targets.items():
-        if repost_photo:
-            largest_photo = repost_photo[-1].file_id
-            await context.bot.send_photo(
-                chat_id=target["chat_id"],
-                photo=largest_photo,
-                caption=repost_text if repost_text else None
-            )
-            results.append(f"Photo to {group_key}")
-        elif repost_video:
-            await context.bot.send_video(
-                chat_id=target["chat_id"],
-                video=repost_video.file_id,
-                caption=repost_text if repost_text else None
-            )
-            results.append(f"Video to {group_key}")
-        elif repost_document:
-            await context.bot.send_document(
-                chat_id=target["chat_id"],
-                document=repost_document.file_id,
-                caption=repost_text if repost_text else None
-            )
-            results.append(f"Document to {group_key}")
-        elif repost_text:
-            await context.bot.send_message(
-                chat_id=target["chat_id"],
-                text=repost_text
-            )
-            results.append(f"Text to {group_key}")
+        try:
+            if repost_photo:
+                largest_photo = repost_photo[-1].file_id
+                await context.bot.send_photo(
+                    chat_id=target["chat_id"],
+                    photo=largest_photo,
+                    caption=repost_text if repost_text else None
+                )
+                results.append(f"Photo to {group_key}")
+            elif repost_video:
+                await context.bot.send_video(
+                    chat_id=target["chat_id"],
+                    video=repost_video.file_id,
+                    caption=repost_text if repost_text else None
+                )
+                results.append(f"Video to {group_key}")
+            elif repost_document:
+                await context.bot.send_document(
+                    chat_id=target["chat_id"],
+                    document=repost_document.file_id,
+                    caption=repost_text if repost_text else None
+                )
+                results.append(f"Document to {group_key}")
+            elif repost_text:
+                await context.bot.send_message(
+                    chat_id=target["chat_id"],
+                    text=repost_text
+                )
+                results.append(f"Text to {group_key}")
+        except Exception as e:
+            results.append(f"Failed to send to {group_key}: {e}")
 
-    if message:
-        await message.reply_text("Aurion posted:\n" + "\n".join(results) if results else "Nothing sent.")
+    await message.reply_text("Aurion posted:\n" + "\n".join(results) if results else "Nothing sent.")
 
 from datetime import timezone as dt_timezone
 
