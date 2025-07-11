@@ -29,10 +29,19 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Define all channels/groups Aurion will post to, using labels to match your Supabase table
 GROUP_POST_TARGETS = {
-    "group 1": {"chat_id": -1002393705231},
-    "group 2": {"chat_id": -1002377255109},
+    "group 1": {"chat_id": -1002393705231},          # Your previous test group
+    "group 2": {"chat_id": -1002377255109},          # Another test group
+    "channel 1": {"chat_id": -1002431571054},        # 3C Thread To Success (the "head" channel)
+    # Add more channels/groups here as: "channel 2": {"chat_id": ...}
 }
+
+# The content center for managing Aurion's outbound posts
+AURION_CONTENT_CENTER_CHAT_ID = -1002471721022  # Aurion 3C Mascot Playground
+
+# Only allow certain users to trigger forwarding (add your Telegram user ID here)
+ADMIN_USER_IDS = {123456789}  # <-- Replace with your numeric Telegram user id
 
 processing_messages = [
     "Hey Champ, give me a second to help you with that!",
@@ -413,6 +422,20 @@ async def sendnow(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("All pending posts delivered.")
 
+# ----------- CONTENT CENTER FORWARDING HANDLER -----------
+async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Only proceed for messages in the content center channel
+    if update.effective_chat.id != AURION_CONTENT_CENTER_CHAT_ID:
+        return
+    if update.effective_user.id not in ADMIN_USER_IDS:
+        await update.message.reply_text("Sorry, only admins can trigger Aurion forwarding.")
+        return
+    content = update.message.text or (update.message.caption if update.message.caption else "")
+    # Forward/post the content to all targets
+    for group_key, target in GROUP_POST_TARGETS.items():
+        await context.bot.send_message(chat_id=target["chat_id"], text=content)
+    await update.message.reply_text("Aurion has forwarded your content to all groups/channels.")
+
 # ----------- ERROR HANDLER: Logs full traceback -----------
 async def error_handler(update, context):
     logger.error("Exception while handling an update:", exc_info=context.error)
@@ -455,6 +478,8 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
     app.add_handler(CommandHandler("sendnow", sendnow))
+    # Add the content center handler for forwarding
+    app.add_handler(MessageHandler(filters.TEXT & filters.Chat(AURION_CONTENT_CENTER_CHAT_ID), content_center_listener))
     app.add_error_handler(error_handler)
 
     schedule_daily_jobs(app.job_queue)
