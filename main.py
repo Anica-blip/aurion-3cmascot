@@ -407,13 +407,12 @@ async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_
     if message:
         await message.reply_text("Aurion posted:\n" + "\n".join(results) if results else "Nothing sent.")
 
-# ...rest of your scheduled job, admin commands, and error handling code (unchanged)...
-# (Keep as in your original file, omitted for brevity - see above)
-
-# ...keep your send_due_messages_job, schedule_daily_jobs, sendnow, error_handler, main, etc. as before...
-# ...no changes below this line except the new content_center_listener...
-
 from datetime import timezone as dt_timezone
+
+async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
+    # Restore your scheduled posting logic here if you use scheduled posts.
+    # If you don't use scheduled posts, you can leave this as a pass.
+    pass
 
 def schedule_daily_jobs(job_queue):
     times = [
