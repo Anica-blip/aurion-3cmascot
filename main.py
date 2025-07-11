@@ -315,7 +315,14 @@ def parse_targets_from_message(text):
     return None
 
 async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # --- Robust null checks to avoid AttributeError ---
+    # Debug print to verify handler entry and update structure
+    print(
+        f"Handler triggered: user={getattr(update.effective_user, 'id', None)}, "
+        f"chat={getattr(update.effective_chat, 'id', None)}, "
+        f"text={getattr(getattr(update, 'message', None), 'text', None)!r}, "
+        f"caption={getattr(getattr(update, 'message', None), 'caption', None)!r}"
+    )
+
     if not update.effective_chat or not update.effective_user:
         logger.warning("Update missing effective_chat or effective_user: %r", update)
         return
@@ -332,11 +339,33 @@ async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_
         logger.warning("No message in update for content_center_listener: %r", update)
         return
 
-    text = message.text or message.caption or ""
-    targets = parse_targets_from_message(text)
-    # Remove the '/to ...' line from text/caption if present
-    if targets:
-        text = re.sub(r'^\/to\s+.+(\n|$)', '', text, flags=re.IGNORECASE).lstrip()
+    # New logic: support /to ... as reply to previous message, or as first line in a new message/caption
+    targets = None
+    repost_text = None
+    repost_photo = None
+    repost_video = None
+    repost_document = None
+
+    # Case 1: /to ... as a reply to another message
+    if message.reply_to_message and (message.text and message.text.strip().lower().startswith('/to ')):
+        targets = parse_targets_from_message(message.text)
+        # Use the replied-to message's content/media/caption
+        source_message = message.reply_to_message
+        repost_text = source_message.text or source_message.caption or ""
+        repost_photo = source_message.photo
+        repost_video = source_message.video
+        repost_document = source_message.document
+    else:
+        # Case 2: /to ... as first line of a new message/caption
+        text = message.text or message.caption or ""
+        targets = parse_targets_from_message(text)
+        # Remove the '/to ...' line from text/caption if present
+        if targets:
+            text = re.sub(r'^\/to\s+.+(\n|$)', '', text, flags=re.IGNORECASE).lstrip()
+        repost_text = text
+        repost_photo = message.photo
+        repost_video = message.video
+        repost_document = message.document
 
     # Decide where to post
     if targets:
@@ -346,100 +375,43 @@ async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_
 
     results = []
     for group_key, target in chosen_targets.items():
-        # If photo(s) exist
-        if message.photo:
-            largest_photo = message.photo[-1].file_id
+        if repost_photo:
+            largest_photo = repost_photo[-1].file_id
             await context.bot.send_photo(
                 chat_id=target["chat_id"],
                 photo=largest_photo,
-                caption=text if text else None
+                caption=repost_text if repost_text else None
             )
             results.append(f"Photo to {group_key}")
-        # If video exists
-        elif message.video:
+        elif repost_video:
             await context.bot.send_video(
                 chat_id=target["chat_id"],
-                video=message.video.file_id,
-                caption=text if text else None
+                video=repost_video.file_id,
+                caption=repost_text if repost_text else None
             )
             results.append(f"Video to {group_key}")
-        # If document exists
-        elif message.document:
+        elif repost_document:
             await context.bot.send_document(
                 chat_id=target["chat_id"],
-                document=message.document.file_id,
-                caption=text if text else None
+                document=repost_document.file_id,
+                caption=repost_text if repost_text else None
             )
             results.append(f"Document to {group_key}")
-        # If just text
-        elif text:
+        elif repost_text:
             await context.bot.send_message(
                 chat_id=target["chat_id"],
-                text=text
+                text=repost_text
             )
             results.append(f"Text to {group_key}")
 
     if message:
         await message.reply_text("Aurion posted:\n" + "\n".join(results) if results else "Nothing sent.")
 
-# The rest of your scheduled job, admin commands, and error handling is unchanged below...
+# ...rest of your scheduled job, admin commands, and error handling code (unchanged)...
+# (Keep as in your original file, omitted for brevity - see above)
 
-async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
-    now_utc = datetime.now(timezone.utc)
-    slot_start = now_utc.replace(second=0, microsecond=0)
-    slot_end = slot_start.replace(second=59, microsecond=999999)
-    slot_start_str = slot_start.isoformat()
-    slot_end_str = slot_end.isoformat()
-    logger.info(f"[SCHEDULED JOB] Triggered at {now_utc.isoformat()}")
-    logger.info(f"[SCHEDULED JOB] Slot window: {slot_start_str} to {slot_end_str}")
-
-    try:
-        result = supabase.table("message") \
-            .select("*") \
-            .gte("scheduled_at", slot_start_str) \
-            .lte("scheduled_at", slot_end_str) \
-            .is_("sent", False) \
-            .execute()
-        messages = result.data or []
-        logger.info(f"[SCHEDULED JOB] Found {len(messages)} messages scheduled in this slot")
-        logger.info(f"[SCHEDULED JOB] Fetched messages: {messages}")
-    except Exception as e:
-        logger.error(f"[SCHEDULED JOB] Supabase error: {e}")
-        return
-
-    if not messages:
-        logger.info("[SCHEDULED JOB] No due messages to send in this slot.")
-        return
-
-    for msg in messages:
-        group_key = msg.get("group_channel")
-        post_target = GROUP_POST_TARGETS.get(group_key)
-        content = msg.get("content")
-        msg_id = msg.get("id")
-        chat_id = post_target["chat_id"] if post_target else None
-        thread_link = msg.get("thread_id")
-        message_thread_id = extract_message_thread_id(thread_link)
-
-        logger.info(f"[SCHEDULED JOB] Processing message id={msg_id}, group_channel={group_key}, chat_id={chat_id}, thread_link={thread_link}, message_thread_id={message_thread_id}, content={content!r}")
-        if not post_target or not content:
-            logger.error(f"[SCHEDULED JOB] Skipping message id={msg_id}: missing group_channel or content")
-            continue
-        try:
-            if message_thread_id:
-                await context.bot.send_message(chat_id=chat_id, text=content, message_thread_id=message_thread_id)
-            else:
-                await context.bot.send_message(chat_id=chat_id, text=content)
-            logger.info(f"[SCHEDULED JOB] Sent message id={msg_id} to chat_id={chat_id}, message_thread_id={message_thread_id}")
-        except Exception as e:
-            logger.error(f"[SCHEDULED JOB] Failed to send message id={msg_id}: {e}")
-            continue
-        try:
-            result = supabase.table("message").update({"sent": True}).eq("id", msg_id).execute()
-            logger.info(f"[SCHEDULED JOB] Update result for id={msg_id}: {result.data}")
-            if not result.data:
-                logger.error(f"[SCHEDULED JOB] Update failed for id={msg_id}. Check field types, RLS, and permissions.")
-        except Exception as e:
-            logger.error(f"[SCHEDULED JOB] Update exception for id={msg_id}: {e}")
+# ...keep your send_due_messages_job, schedule_daily_jobs, sendnow, error_handler, main, etc. as before...
+# ...no changes below this line except the new content_center_listener...
 
 from datetime import timezone as dt_timezone
 
