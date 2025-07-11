@@ -315,14 +315,23 @@ def parse_targets_from_message(text):
     return None
 
 async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Only proceed for messages in the content center channel, and by admin
+    # --- Robust null checks to avoid AttributeError ---
+    if not update.effective_chat or not update.effective_user:
+        logger.warning("Update missing effective_chat or effective_user: %r", update)
+        return
+
     if update.effective_chat.id != AURION_CONTENT_CENTER_CHAT_ID:
         return
     if update.effective_user.id not in ADMIN_USER_IDS:
-        await update.message.reply_text("Sorry, only admins can trigger Aurion reposting.")
+        if update.message:
+            await update.message.reply_text("Sorry, only admins can trigger Aurion reposting.")
         return
 
     message = update.message
+    if not message:
+        logger.warning("No message in update for content_center_listener: %r", update)
+        return
+
     text = message.text or message.caption or ""
     targets = parse_targets_from_message(text)
     # Remove the '/to ...' line from text/caption if present
@@ -370,7 +379,8 @@ async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_
             )
             results.append(f"Text to {group_key}")
 
-    await update.message.reply_text("Aurion posted:\n" + "\n".join(results) if results else "Nothing sent.")
+    if message:
+        await message.reply_text("Aurion posted:\n" + "\n".join(results) if results else "Nothing sent.")
 
 # The rest of your scheduled job, admin commands, and error handling is unchanged below...
 
