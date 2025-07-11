@@ -36,7 +36,7 @@ GROUP_POST_TARGETS = {
 }
 
 AURION_CONTENT_CENTER_CHAT_ID = -1002471721022  # Aurion 3C Mascot Playground channel
-ADMIN_USER_IDS = {123456789}  # <-- Replace with your Telegram user ID
+ADMIN_USER_IDS = {1377419565}  # <-- Replace with your Telegram user ID
 
 processing_messages = [
     "Hey Champ, give me a second to help you with that!",
