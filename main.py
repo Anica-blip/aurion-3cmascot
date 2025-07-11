@@ -29,19 +29,14 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Define all channels/groups Aurion will post to, using labels to match your Supabase table
 GROUP_POST_TARGETS = {
-    "group 1": {"chat_id": -1002393705231},          # Your previous test group
-    "group 2": {"chat_id": -1002377255109},          # Another test group
-    "channel 1": {"chat_id": -1002431571054},        # 3C Thread To Success (the "head" channel)
-    # Add more channels/groups here as: "channel 2": {"chat_id": ...}
+    "group 1": {"chat_id": -1002393705231},
+    "group 2": {"chat_id": -1002377255109},
+    "channel 1": {"chat_id": -1002431571054},
 }
 
-# The content center for managing Aurion's outbound posts
-AURION_CONTENT_CENTER_CHAT_ID = -1002471721022  # Aurion 3C Mascot Playground
-
-# Only allow certain users to trigger forwarding (add your Telegram user ID here)
-ADMIN_USER_IDS = {123456789}  # <-- Replace with your numeric Telegram user id
+AURION_CONTENT_CENTER_CHAT_ID = -1002471721022  # Aurion 3C Mascot Playground channel
+ADMIN_USER_IDS = {123456789}  # <-- Replace with your Telegram user ID
 
 processing_messages = [
     "Hey Champ, give me a second to help you with that!",
@@ -305,10 +300,82 @@ def extract_message_thread_id(link):
             return int(match.group('topicid'))
     return None
 
-# ----------- SCHEDULED JOB: Checks and sends ONLY 'now' messages -----------
+def parse_targets_from_message(text):
+    """
+    Looks for a line like '/to group 1, channel 1' at the start of message or caption.
+    Returns a set of channel keys e.g. {"group 1", "channel 1"}
+    If none found, returns None (meaning: send to all).
+    """
+    if not text:
+        return None
+    m = re.match(r'^\/to\s+(.+)', text.strip(), re.IGNORECASE)
+    if m:
+        targets = {t.strip().lower() for t in m.group(1).split(",")}
+        return targets
+    return None
+
+async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Only proceed for messages in the content center channel, and by admin
+    if update.effective_chat.id != AURION_CONTENT_CENTER_CHAT_ID:
+        return
+    if update.effective_user.id not in ADMIN_USER_IDS:
+        await update.message.reply_text("Sorry, only admins can trigger Aurion reposting.")
+        return
+
+    message = update.message
+    text = message.text or message.caption or ""
+    targets = parse_targets_from_message(text)
+    # Remove the '/to ...' line from text/caption if present
+    if targets:
+        text = re.sub(r'^\/to\s+.+(\n|$)', '', text, flags=re.IGNORECASE).lstrip()
+
+    # Decide where to post
+    if targets:
+        chosen_targets = {k: v for k, v in GROUP_POST_TARGETS.items() if k.lower() in targets}
+    else:
+        chosen_targets = GROUP_POST_TARGETS
+
+    results = []
+    for group_key, target in chosen_targets.items():
+        # If photo(s) exist
+        if message.photo:
+            largest_photo = message.photo[-1].file_id
+            await context.bot.send_photo(
+                chat_id=target["chat_id"],
+                photo=largest_photo,
+                caption=text if text else None
+            )
+            results.append(f"Photo to {group_key}")
+        # If video exists
+        elif message.video:
+            await context.bot.send_video(
+                chat_id=target["chat_id"],
+                video=message.video.file_id,
+                caption=text if text else None
+            )
+            results.append(f"Video to {group_key}")
+        # If document exists
+        elif message.document:
+            await context.bot.send_document(
+                chat_id=target["chat_id"],
+                document=message.document.file_id,
+                caption=text if text else None
+            )
+            results.append(f"Document to {group_key}")
+        # If just text
+        elif text:
+            await context.bot.send_message(
+                chat_id=target["chat_id"],
+                text=text
+            )
+            results.append(f"Text to {group_key}")
+
+    await update.message.reply_text("Aurion posted:\n" + "\n".join(results) if results else "Nothing sent.")
+
+# The rest of your scheduled job, admin commands, and error handling is unchanged below...
+
 async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
     now_utc = datetime.now(timezone.utc)
-    # Round to the current minute (ignore seconds/microseconds)
     slot_start = now_utc.replace(second=0, microsecond=0)
     slot_end = slot_start.replace(second=59, microsecond=999999)
     slot_start_str = slot_start.isoformat()
@@ -317,7 +384,6 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"[SCHEDULED JOB] Slot window: {slot_start_str} to {slot_end_str}")
 
     try:
-        # Query ONLY messages scheduled for this time slot (this exact minute)
         result = supabase.table("message") \
             .select("*") \
             .gte("scheduled_at", slot_start_str) \
@@ -365,11 +431,9 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"[SCHEDULED JOB] Update exception for id={msg_id}: {e}")
 
-# ----------- SCHEDULER SETUP: Four times daily, every day - UTC Aware -----------
 from datetime import timezone as dt_timezone
 
 def schedule_daily_jobs(job_queue):
-    # Schedule jobs at 08:00, 12:00, 17:00, 21:00 UTC every day
     times = [
         time(8, 0, tzinfo=timezone.utc),
         time(12, 0, tzinfo=timezone.utc),
@@ -380,12 +444,10 @@ def schedule_daily_jobs(job_queue):
         job_queue.run_daily(send_due_messages_job, t, days=(0,1,2,3,4,5,6))
     logger.info("[SCHEDULER] Jobs scheduled for 08:00, 12:00, 17:00, 21:00 UTC (every day, UTC aware)")
 
-# ----------- MANUAL TRIGGER: /sendnow in Telegram -----------
 async def sendnow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now_utc = datetime.now(timezone.utc)
     now_utc_str = now_utc.isoformat()
     try:
-        # This version sends ALL unsent messages scheduled for now or earlier
         result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).is_("sent", False).execute()
         messages = result.data or []
     except Exception as e:
@@ -422,21 +484,6 @@ async def sendnow(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("All pending posts delivered.")
 
-# ----------- CONTENT CENTER FORWARDING HANDLER -----------
-async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Only proceed for messages in the content center channel
-    if update.effective_chat.id != AURION_CONTENT_CENTER_CHAT_ID:
-        return
-    if update.effective_user.id not in ADMIN_USER_IDS:
-        await update.message.reply_text("Sorry, only admins can trigger Aurion forwarding.")
-        return
-    content = update.message.text or (update.message.caption if update.message.caption else "")
-    # Forward/post the content to all targets
-    for group_key, target in GROUP_POST_TARGETS.items():
-        await context.bot.send_message(chat_id=target["chat_id"], text=content)
-    await update.message.reply_text("Aurion has forwarded your content to all groups/channels.")
-
-# ----------- ERROR HANDLER: Logs full traceback -----------
 async def error_handler(update, context):
     logger.error("Exception while handling an update:", exc_info=context.error)
     if context.error:
@@ -478,8 +525,11 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
     app.add_handler(CommandHandler("sendnow", sendnow))
-    # Add the content center handler for forwarding
-    app.add_handler(MessageHandler(filters.TEXT & filters.Chat(AURION_CONTENT_CENTER_CHAT_ID), content_center_listener))
+    # The universal content-center handler:
+    app.add_handler(MessageHandler(
+        (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL) & filters.Chat(AURION_CONTENT_CENTER_CHAT_ID),
+        content_center_listener
+    ))
     app.add_error_handler(error_handler)
 
     schedule_daily_jobs(app.job_queue)
