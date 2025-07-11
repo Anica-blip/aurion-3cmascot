@@ -35,8 +35,8 @@ GROUP_POST_TARGETS = {
     "channel 1": {"chat_id": -1002431571054},
 }
 
-AURION_CONTENT_CENTER_CHAT_ID = -1002471721022  # Aurion 3C Mascot Playground channel
-ADMIN_USER_IDS = {1377419565}  # <-- Replace with your Telegram user ID
+AURION_CONTENT_CENTER_CHAT_ID = -1002471721022  
+ADMIN_USER_IDS = {1377419565} 
 
 processing_messages = [
     "Hey Champ, give me a second to help you with that!",
@@ -300,106 +300,24 @@ def extract_message_thread_id(link):
             return int(match.group('topicid'))
     return None
 
-def parse_targets_from_message(text):
-    """
-    Looks for a line like '/to group 1, channel 1' at the start of message or caption.
-    Returns a set of channel keys e.g. {"group 1", "channel 1"}
-    If none found, returns None (meaning: send to all).
-    """
-    if not text:
-        return None
-    m = re.match(r'^\/to\s+(.+)', text.strip(), re.IGNORECASE)
-    if m:
-        targets = {t.strip().lower() for t in m.group(1).split(",")}
-        return targets
-    return None
-
-async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Listen for /to ... commands as replies to messages. 
-    When detected, repost the replied-to message to the specified targets as the bot.
-    """
-    message = update.message
-
-    # Only proceed if this is a reply and starts with /to
-    if not (message and message.reply_to_message and message.text and message.text.lower().startswith('/to ')):
-        return
-
-    # Only allow from ADMIN_USER_IDS in AURION_CONTENT_CENTER_CHAT_ID
-    if update.effective_chat.id != AURION_CONTENT_CENTER_CHAT_ID or update.effective_user.id not in ADMIN_USER_IDS:
-        if message:
-            await message.reply_text("Sorry, only admins can trigger Aurion reposting.")
-        return
-
-    # Parse target groups/channels
-    targets = parse_targets_from_message(message.text)
-    if not targets:
-        await message.reply_text("Please specify at least one valid group/channel in your /to command.")
-        return
-
-    # Gather original message content
-    source_message = message.reply_to_message
-    repost_text = source_message.text or source_message.caption or ""
-    repost_photo = source_message.photo
-    repost_video = source_message.video
-    repost_document = source_message.document
-
-    chosen_targets = {k: v for k, v in GROUP_POST_TARGETS.items() if k.lower() in targets}
-    if not chosen_targets:
-        await message.reply_text("No valid targets found. Please check your /to command.")
-        return
-
-    results = []
-    for group_key, target in chosen_targets.items():
-        try:
-            if repost_photo:
-                largest_photo = repost_photo[-1].file_id
-                await context.bot.send_photo(
-                    chat_id=target["chat_id"],
-                    photo=largest_photo,
-                    caption=repost_text if repost_text else None
-                )
-                results.append(f"Photo to {group_key}")
-            elif repost_video:
-                await context.bot.send_video(
-                    chat_id=target["chat_id"],
-                    video=repost_video.file_id,
-                    caption=repost_text if repost_text else None
-                )
-                results.append(f"Video to {group_key}")
-            elif repost_document:
-                await context.bot.send_document(
-                    chat_id=target["chat_id"],
-                    document=repost_document.file_id,
-                    caption=repost_text if repost_text else None
-                )
-                results.append(f"Document to {group_key}")
-            elif repost_text:
-                await context.bot.send_message(
-                    chat_id=target["chat_id"],
-                    text=repost_text
-                )
-                results.append(f"Text to {group_key}")
-        except Exception as e:
-            results.append(f"Failed to send to {group_key}: {e}")
-
-    await message.reply_text("Aurion posted:\n" + "\n".join(results) if results else "Nothing sent.")
-
-from datetime import timezone as dt_timezone
-
+# ----------- SCHEDULED JOB: Checks and sends due messages -----------
 async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
     now_utc = datetime.now(timezone.utc)
     now_utc_str = now_utc.isoformat()
+    logger.info(f"[SCHEDULED JOB] Triggered at {now_utc_str}")
+
     try:
-        # Fetch all unsent messages scheduled up to now
-        result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).eq("sent", False).execute()
+        # Query all messages that are due and not sent
+        result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).is_("sent", False).execute()
         messages = result.data or []
+        logger.info(f"[SCHEDULED JOB] Found {len(messages)} messages due at or before {now_utc_str}")
+        logger.info(f"[SCHEDULED JOB] Fetched messages: {messages}")
     except Exception as e:
         logger.error(f"[SCHEDULED JOB] Supabase error: {e}")
         return
 
     if not messages:
-        logger.info("[SCHEDULED JOB] No pending scheduled posts.")
+        logger.info("[SCHEDULED JOB] No due messages to send.")
         return
 
     for msg in messages:
@@ -408,28 +326,35 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
         content = msg.get("content")
         msg_id = msg.get("id")
         chat_id = post_target["chat_id"] if post_target else None
-        thread_link = msg.get("thread_id")
+        thread_link = msg.get("thread_id")  # This is a link or None
         message_thread_id = extract_message_thread_id(thread_link)
+
+        logger.info(f"[SCHEDULED JOB] Processing message id={msg_id}, group_channel={group_key}, chat_id={chat_id}, thread_link={thread_link}, message_thread_id={message_thread_id}, content={content!r}")
         if not post_target or not content:
-            logger.warning(f"[SCHEDULED JOB] Skipping message id={msg_id}: missing target or content.")
+            logger.error(f"[SCHEDULED JOB] Skipping message id={msg_id}: missing group_channel or content")
             continue
         try:
             if message_thread_id:
                 await context.bot.send_message(chat_id=chat_id, text=content, message_thread_id=message_thread_id)
             else:
                 await context.bot.send_message(chat_id=chat_id, text=content)
-            logger.info(f"[SCHEDULED JOB] Sent message id={msg_id} to {group_key}")
+            logger.info(f"[SCHEDULED JOB] Sent message id={msg_id} to chat_id={chat_id}, message_thread_id={message_thread_id}")
         except Exception as e:
             logger.error(f"[SCHEDULED JOB] Failed to send message id={msg_id}: {e}")
             continue
         try:
-            supabase.table("message").update({"sent": True}).eq("id", msg_id).execute()
+            result = supabase.table("message").update({"sent": True}).eq("id", msg_id).execute()
+            logger.info(f"[SCHEDULED JOB] Update result for id={msg_id}: {result.data}")
+            if not result.data:
+                logger.error(f"[SCHEDULED JOB] Update failed for id={msg_id}. Check field types, RLS, and permissions.")
         except Exception as e:
             logger.error(f"[SCHEDULED JOB] Update exception for id={msg_id}: {e}")
 
-    logger.info("[SCHEDULED JOB] All pending scheduled posts processed.")
+# ----------- SCHEDULER SETUP: Four times daily, every day - UTC Aware -----------
+from datetime import timezone as dt_timezone
 
 def schedule_daily_jobs(job_queue):
+    # Schedule jobs at 08:00, 12:00, 17:00, 21:00 UTC every day
     times = [
         time(8, 0, tzinfo=timezone.utc),
         time(12, 0, tzinfo=timezone.utc),
@@ -440,46 +365,12 @@ def schedule_daily_jobs(job_queue):
         job_queue.run_daily(send_due_messages_job, t, days=(0,1,2,3,4,5,6))
     logger.info("[SCHEDULER] Jobs scheduled for 08:00, 12:00, 17:00, 21:00 UTC (every day, UTC aware)")
 
+# ----------- MANUAL TRIGGER: /sendnow in Telegram -----------
 async def sendnow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    now_utc = datetime.now(timezone.utc)
-    now_utc_str = now_utc.isoformat()
-    try:
-        result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).eq("sent", False).execute()
-        messages = result.data or []
-    except Exception as e:
-        logger.error(f"[SENDNOW] Supabase error: {e}")
-        await update.message.reply_text("Sorry Champ, error fetching messages.")
-        return
+    await send_due_messages_job(context)
+    await update.message.reply_text("Triggered the scheduled job manually.")
 
-    if not messages:
-        await update.message.reply_text("No pending posts to send.")
-        return
-
-    for msg in messages:
-        group_key = msg.get("group_channel")
-        post_target = GROUP_POST_TARGETS.get(group_key)
-        content = msg.get("content")
-        msg_id = msg.get("id")
-        chat_id = post_target["chat_id"] if post_target else None
-        thread_link = msg.get("thread_id")
-        message_thread_id = extract_message_thread_id(thread_link)
-        if not post_target or not content:
-            continue
-        try:
-            if message_thread_id:
-                await context.bot.send_message(chat_id=chat_id, text=content, message_thread_id=message_thread_id)
-            else:
-                await context.bot.send_message(chat_id=chat_id, text=content)
-        except Exception as e:
-            logger.error(f"[SENDNOW] Failed to send message id={msg_id}: {e}")
-            continue
-        try:
-            supabase.table("message").update({"sent": True}).eq("id", msg_id).execute()
-        except Exception as e:
-            logger.error(f"[SENDNOW] Update exception for id={msg_id}: {e}")
-
-    await update.message.reply_text("All pending posts delivered.")
-
+# ----------- ERROR HANDLER: Logs full traceback -----------
 async def error_handler(update, context):
     logger.error("Exception while handling an update:", exc_info=context.error)
     if context.error:
@@ -521,11 +412,6 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
     app.add_handler(CommandHandler("sendnow", sendnow))
-    # The universal content-center handler:
-    app.add_handler(MessageHandler(
-        (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL) & filters.Chat(AURION_CONTENT_CENTER_CHAT_ID),
-        content_center_listener
-    ))
     app.add_error_handler(error_handler)
 
     schedule_daily_jobs(app.job_queue)
