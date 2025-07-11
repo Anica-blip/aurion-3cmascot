@@ -33,10 +33,11 @@ GROUP_POST_TARGETS = {
     "group 1": {"chat_id": -1002393705231},
     "group 2": {"chat_id": -1002377255109},
     "channel 1": {"chat_id": -1002431571054},
+    "content center": {"chat_id": -1002843364165},  # You can use this label if you want to send to the content center
 }
 
-AURION_CONTENT_CENTER_CHAT_ID = -1002471721022  
-ADMIN_USER_IDS = {1377419565} 
+AURION_CONTENT_CENTER_CHAT_ID = -1002843364165  # NEW GROUP ID SET HERE
+ADMIN_USER_IDS = {1377419565}
 
 processing_messages = [
     "Hey Champ, give me a second to help you with that!",
