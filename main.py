@@ -384,7 +384,11 @@ async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_
                 )
                 results.append(f"Text to {group_key}")
         except Exception as e:
-            results.append(f"Failed to send to {group_key}: {e}")
+            # Report error in chat and log it
+            error_msg = f"Failed to send to {group_key}: {e}"
+            results.append(error_msg)
+            logger.error(error_msg)
+            await message.reply_text(error_msg)
 
     await message.reply_text("Aurion posted:\n" + "\n".join(results) if results else "Nothing sent.")
     logger.info(f"content_center_listener: Results: {results}")
@@ -430,7 +434,16 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id=chat_id, text=content)
             logger.info(f"[SCHEDULED JOB] Sent message id={msg_id} to chat_id={chat_id}, message_thread_id={message_thread_id}")
         except Exception as e:
+            # Report error in log and as a message to a designated admin (optional: here to content center)
             logger.error(f"[SCHEDULED JOB] Failed to send message id={msg_id}: {e}")
+            # Optionally, you can alert the admin group or content center directly
+            try:
+                await context.bot.send_message(
+                    chat_id=AURION_CONTENT_CENTER_CHAT_ID,
+                    text=f"[SCHEDULED JOB ERROR] Failed to send scheduled message id={msg_id} to {group_key}: {e}"
+                )
+            except Exception as err:
+                logger.error(f"[SCHEDULED JOB] Failed to notify admin: {err}")
             continue
         try:
             result = supabase.table("message").update({"sent": True}).eq("id", msg_id).execute()
@@ -464,6 +477,15 @@ async def error_handler(update, context):
         logger.error(f"Traceback:\n{tb_str}")
         print("Exception while handling an update:", context.error)
         print(tb_str)
+        # Inform the admin/content-center group
+        try:
+            await context.bot.send_message(
+                chat_id=AURION_CONTENT_CENTER_CHAT_ID,
+                text=f"[BOT ERROR] Exception while handling an update:\n{context.error}\n\nTraceback:\n{tb_str}"
+            )
+        except Exception as admin_notify_error:
+            logger.error(f"Failed to notify admin about error: {admin_notify_error}")
+            print(f"Failed to notify admin about error: {admin_notify_error}")
     else:
         logger.error("No exception information available (context.error is None)")
         print("No exception information available (context.error is None)")
