@@ -16,9 +16,6 @@ from openai import OpenAI
 from supabase import create_client, Client
 import traceback
 
-# === AURION BOT VERSION TEST 2025-07-11 ===
-print("=== AURION BOT VERSION TEST 2025-07-11 ===")
-
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
@@ -303,107 +300,6 @@ def extract_message_thread_id(link):
         if match:
             return int(match.group('topicid'))
     return None
-
-def parse_targets_from_message(text):
-    """
-    Looks for a line like '/to group 1, channel 1' at the start of message or caption.
-    Returns a set of channel keys e.g. {"group 1", "channel 1"}
-    If none found, returns None (meaning: send to all).
-    """
-    if not text:
-        return None
-    m = re.match(r'^\/to\s+(.+)', text.strip(), re.IGNORECASE)
-    if m:
-        targets = {t.strip().lower() for t in m.group(1).split(",")}
-        return targets
-    return None
-
-# ------------------ REPLY /to REPOST FUNCTIONALITY -----------------------
-async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info("AURION BOT VERSION TEST: content_center_listener was called")
-    message = update.message
-    logger.info(f"content_center_listener: user={update.effective_user.id} chat={update.effective_chat.id} text={getattr(message,'text', None)} caption={getattr(message, 'caption', None)}")
-
-    # Only proceed if this is a reply and starts with /to (check both .text and .caption)
-    command_text = (message.text or message.caption or "").strip()
-    if not (message and message.reply_to_message and command_text.lower().startswith('/to ')):
-        logger.info("content_center_listener: Early exit - not a reply or not starting with /to")
-        return
-
-    if update.effective_chat.id != AURION_CONTENT_CENTER_CHAT_ID or update.effective_user.id not in ADMIN_USER_IDS:
-        await message.reply_text("Sorry, only admins can trigger Aurion reposting.")
-        logger.info("content_center_listener: Early exit - not admin or wrong chat.")
-        return
-
-    targets = parse_targets_from_message(command_text)
-    logger.info(f"content_center_listener: Parsed targets: {targets}")
-    if not targets:
-        await message.reply_text("Please specify at least one valid group/channel in your /to command.")
-        logger.info("content_center_listener: Early exit - no valid targets parsed.")
-        return
-
-    logger.info(f"content_center_listener: GROUP_POST_TARGETS keys: {list(GROUP_POST_TARGETS.keys())}")
-
-    source_message = message.reply_to_message
-    repost_text = source_message.text or source_message.caption or ""
-    repost_photo = source_message.photo
-    repost_video = source_message.video
-    repost_document = source_message.document
-
-    chosen_targets = {k: v for k, v in GROUP_POST_TARGETS.items() if k.lower() in targets}
-    logger.info(f"content_center_listener: Chosen targets: {chosen_targets}")
-
-    if not chosen_targets:
-        await message.reply_text("No valid targets found. Please check your /to command.")
-        logger.info("content_center_listener: Early exit - no valid targets found.")
-        return
-
-    results = []
-    for group_key, target in chosen_targets.items():
-        try:
-            logger.info(f"content_center_listener: About to send to {group_key}")
-            if repost_photo:
-                largest_photo = repost_photo[-1].file_id
-                await context.bot.send_photo(
-                    chat_id=target["chat_id"],
-                    photo=largest_photo,
-                    caption=repost_text if repost_text else None
-                )
-                results.append(f"Photo to {group_key}")
-            elif repost_video:
-                await context.bot.send_video(
-                    chat_id=target["chat_id"],
-                    video=repost_video.file_id,
-                    caption=repost_text if repost_text else None
-                )
-                results.append(f"Video to {group_key}")
-            elif repost_document:
-                await context.bot.send_document(
-                    chat_id=target["chat_id"],
-                    document=repost_document.file_id,
-                    caption=repost_text if repost_text else None
-                )
-                results.append(f"Document to {group_key}")
-            elif repost_text:
-                await context.bot.send_message(
-                    chat_id=target["chat_id"],
-                    text=repost_text
-                )
-                results.append(f"Text to {group_key}")
-            else:
-                logger.info(f"content_center_listener: No content found to repost for {group_key}")
-                results.append(f"No content found to repost for {group_key}")
-        except Exception as e:
-            # Report error in chat and log it
-            error_msg = f"Failed to send to {group_key}: {e}"
-            results.append(error_msg)
-            logger.error(error_msg)
-            await message.reply_text(error_msg)
-
-    await message.reply_text("Aurion posted:\n" + "\n".join(results) if results else "Nothing sent.")
-    logger.info(f"content_center_listener: Results: {results}")
-
-# -------------------------------------------------------------------------
 
 # ----------- SCHEDULED JOB: Checks and sends due messages -----------
 async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
