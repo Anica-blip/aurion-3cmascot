@@ -327,18 +327,22 @@ async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_
     # Only proceed if this is a reply and starts with /to (check both .text and .caption)
     command_text = (message.text or message.caption or "").strip()
     if not (message and message.reply_to_message and command_text.lower().startswith('/to ')):
+        logger.info("content_center_listener: Early exit - not a reply or not starting with /to")
         return
 
     if update.effective_chat.id != AURION_CONTENT_CENTER_CHAT_ID or update.effective_user.id not in ADMIN_USER_IDS:
         await message.reply_text("Sorry, only admins can trigger Aurion reposting.")
-        logger.info("content_center_listener: Not admin or wrong chat.")
+        logger.info("content_center_listener: Early exit - not admin or wrong chat.")
         return
 
     targets = parse_targets_from_message(command_text)
+    logger.info(f"content_center_listener: Parsed targets: {targets}")
     if not targets:
         await message.reply_text("Please specify at least one valid group/channel in your /to command.")
-        logger.info("content_center_listener: No valid targets parsed.")
+        logger.info("content_center_listener: Early exit - no valid targets parsed.")
         return
+
+    logger.info(f"content_center_listener: GROUP_POST_TARGETS keys: {list(GROUP_POST_TARGETS.keys())}")
 
     source_message = message.reply_to_message
     repost_text = source_message.text or source_message.caption or ""
@@ -347,14 +351,17 @@ async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_
     repost_document = source_message.document
 
     chosen_targets = {k: v for k, v in GROUP_POST_TARGETS.items() if k.lower() in targets}
+    logger.info(f"content_center_listener: Chosen targets: {chosen_targets}")
+
     if not chosen_targets:
         await message.reply_text("No valid targets found. Please check your /to command.")
-        logger.info("content_center_listener: No valid targets found.")
+        logger.info("content_center_listener: Early exit - no valid targets found.")
         return
 
     results = []
     for group_key, target in chosen_targets.items():
         try:
+            logger.info(f"content_center_listener: About to send to {group_key}")
             if repost_photo:
                 largest_photo = repost_photo[-1].file_id
                 await context.bot.send_photo(
@@ -383,6 +390,9 @@ async def content_center_listener(update: Update, context: ContextTypes.DEFAULT_
                     text=repost_text
                 )
                 results.append(f"Text to {group_key}")
+            else:
+                logger.info(f"content_center_listener: No content found to repost for {group_key}")
+                results.append(f"No content found to repost for {group_key}")
         except Exception as e:
             # Report error in chat and log it
             error_msg = f"Failed to send to {group_key}: {e}"
