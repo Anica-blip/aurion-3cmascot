@@ -32,12 +32,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 GROUP_POST_TARGETS = {
     "group 1": {"chat_id": -1002393705231},
     "group 2": {"chat_id": -1002377255109},
-    "channel 1": {"chat_id": -1002431571054},
-    "content center": {"chat_id": -1002843364165},
 }
-
-AURION_CONTENT_CENTER_CHAT_ID = -1002843364165
-ADMIN_USER_IDS = {1377419565}
 
 processing_messages = [
     "Hey Champ, give me a second to help you with that!",
@@ -294,6 +289,7 @@ async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 def extract_message_thread_id(link):
+    """Extracts the numeric thread ID from a Telegram topic link."""
     if link and isinstance(link, str):
         match = re.search(r'/c/\d+/(?P<topicid>\d+)', link)
         if match:
@@ -307,6 +303,7 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"[SCHEDULED JOB] Triggered at {now_utc_str}")
 
     try:
+        # Query all messages that are due and not sent
         result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).is_("sent", False).execute()
         messages = result.data or []
         logger.info(f"[SCHEDULED JOB] Found {len(messages)} messages due at or before {now_utc_str}")
@@ -325,7 +322,7 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
         content = msg.get("content")
         msg_id = msg.get("id")
         chat_id = post_target["chat_id"] if post_target else None
-        thread_link = msg.get("thread_id")
+        thread_link = msg.get("thread_id")  # This is a link or None
         message_thread_id = extract_message_thread_id(thread_link)
 
         logger.info(f"[SCHEDULED JOB] Processing message id={msg_id}, group_channel={group_key}, chat_id={chat_id}, thread_link={thread_link}, message_thread_id={message_thread_id}, content={content!r}")
@@ -340,13 +337,6 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"[SCHEDULED JOB] Sent message id={msg_id} to chat_id={chat_id}, message_thread_id={message_thread_id}")
         except Exception as e:
             logger.error(f"[SCHEDULED JOB] Failed to send message id={msg_id}: {e}")
-            try:
-                await context.bot.send_message(
-                    chat_id=AURION_CONTENT_CENTER_CHAT_ID,
-                    text=f"[SCHEDULED JOB ERROR] Failed to send scheduled message id={msg_id} to {group_key}: {e}"
-                )
-            except Exception as err:
-                logger.error(f"[SCHEDULED JOB] Failed to notify admin: {err}")
             continue
         try:
             result = supabase.table("message").update({"sent": True}).eq("id", msg_id).execute()
@@ -356,9 +346,11 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"[SCHEDULED JOB] Update exception for id={msg_id}: {e}")
 
+# ----------- SCHEDULER SETUP: Four times daily, every day - UTC Aware -----------
 from datetime import timezone as dt_timezone
 
 def schedule_daily_jobs(job_queue):
+    # Schedule jobs at 08:00, 12:00, 17:00, 21:00 UTC every day
     times = [
         time(8, 0, tzinfo=timezone.utc),
         time(12, 0, tzinfo=timezone.utc),
@@ -369,10 +361,12 @@ def schedule_daily_jobs(job_queue):
         job_queue.run_daily(send_due_messages_job, t, days=(0,1,2,3,4,5,6))
     logger.info("[SCHEDULER] Jobs scheduled for 08:00, 12:00, 17:00, 21:00 UTC (every day, UTC aware)")
 
+# ----------- MANUAL TRIGGER: /sendnow in Telegram -----------
 async def sendnow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_due_messages_job(context)
     await update.message.reply_text("Triggered the scheduled job manually.")
 
+# ----------- ERROR HANDLER: Logs full traceback -----------
 async def error_handler(update, context):
     logger.error("Exception while handling an update:", exc_info=context.error)
     if context.error:
@@ -380,14 +374,6 @@ async def error_handler(update, context):
         logger.error(f"Traceback:\n{tb_str}")
         print("Exception while handling an update:", context.error)
         print(tb_str)
-        try:
-            await context.bot.send_message(
-                chat_id=AURION_CONTENT_CENTER_CHAT_ID,
-                text=f"[BOT ERROR] Exception while handling an update:\n{context.error}\n\nTraceback:\n{tb_str}"
-            )
-        except Exception as admin_notify_error:
-            logger.error(f"Failed to notify admin about error: {admin_notify_error}")
-            print(f"Failed to notify admin about error: {admin_notify_error}")
     else:
         logger.error("No exception information available (context.error is None)")
         print("No exception information available (context.error is None)")
