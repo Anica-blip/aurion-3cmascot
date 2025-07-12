@@ -296,24 +296,34 @@ def extract_message_thread_id(link):
             return int(match.group('topicid'))
     return None
 
-# ----------- SCHEDULED JOB: Checks and sends due messages -----------
+# ----------- SCHEDULED JOB: Checks and sends ONLY 'now' messages -----------
 async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
     now_utc = datetime.now(timezone.utc)
-    now_utc_str = now_utc.isoformat()
-    logger.info(f"[SCHEDULED JOB] Triggered at {now_utc_str}")
+    # Round to the current minute (ignore seconds/microseconds)
+    slot_start = now_utc.replace(second=0, microsecond=0)
+    slot_end = slot_start.replace(second=59, microsecond=999999)
+    slot_start_str = slot_start.isoformat()
+    slot_end_str = slot_end.isoformat()
+    logger.info(f"[SCHEDULED JOB] Triggered at {now_utc.isoformat()}")
+    logger.info(f"[SCHEDULED JOB] Slot window: {slot_start_str} to {slot_end_str}")
 
     try:
-        # Query all messages that are due and not sent
-        result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).is_("sent", False).execute()
+        # Query ONLY messages scheduled for this time slot (this exact minute)
+        result = supabase.table("message") \
+            .select("*") \
+            .gte("scheduled_at", slot_start_str) \
+            .lte("scheduled_at", slot_end_str) \
+            .is_("sent", False) \
+            .execute()
         messages = result.data or []
-        logger.info(f"[SCHEDULED JOB] Found {len(messages)} messages due at or before {now_utc_str}")
+        logger.info(f"[SCHEDULED JOB] Found {len(messages)} messages scheduled in this slot")
         logger.info(f"[SCHEDULED JOB] Fetched messages: {messages}")
     except Exception as e:
         logger.error(f"[SCHEDULED JOB] Supabase error: {e}")
         return
 
     if not messages:
-        logger.info("[SCHEDULED JOB] No due messages to send.")
+        logger.info("[SCHEDULED JOB] No due messages to send in this slot.")
         return
 
     for msg in messages:
@@ -322,7 +332,7 @@ async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
         content = msg.get("content")
         msg_id = msg.get("id")
         chat_id = post_target["chat_id"] if post_target else None
-        thread_link = msg.get("thread_id")  # This is a link or None
+        thread_link = msg.get("thread_id")
         message_thread_id = extract_message_thread_id(thread_link)
 
         logger.info(f"[SCHEDULED JOB] Processing message id={msg_id}, group_channel={group_key}, chat_id={chat_id}, thread_link={thread_link}, message_thread_id={message_thread_id}, content={content!r}")
@@ -363,8 +373,45 @@ def schedule_daily_jobs(job_queue):
 
 # ----------- MANUAL TRIGGER: /sendnow in Telegram -----------
 async def sendnow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_due_messages_job(context)
-    await update.message.reply_text("Triggered the scheduled job manually.")
+    now_utc = datetime.now(timezone.utc)
+    now_utc_str = now_utc.isoformat()
+    try:
+        # This version sends ALL unsent messages scheduled for now or earlier
+        result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).is_("sent", False).execute()
+        messages = result.data or []
+    except Exception as e:
+        logger.error(f"[SENDNOW] Supabase error: {e}")
+        await update.message.reply_text("Sorry Champ, error fetching messages.")
+        return
+
+    if not messages:
+        await update.message.reply_text("No pending posts to send.")
+        return
+
+    for msg in messages:
+        group_key = msg.get("group_channel")
+        post_target = GROUP_POST_TARGETS.get(group_key)
+        content = msg.get("content")
+        msg_id = msg.get("id")
+        chat_id = post_target["chat_id"] if post_target else None
+        thread_link = msg.get("thread_id")
+        message_thread_id = extract_message_thread_id(thread_link)
+        if not post_target or not content:
+            continue
+        try:
+            if message_thread_id:
+                await context.bot.send_message(chat_id=chat_id, text=content, message_thread_id=message_thread_id)
+            else:
+                await context.bot.send_message(chat_id=chat_id, text=content)
+        except Exception as e:
+            logger.error(f"[SENDNOW] Failed to send message id={msg_id}: {e}")
+            continue
+        try:
+            supabase.table("message").update({"sent": True}).eq("id", msg_id).execute()
+        except Exception as e:
+            logger.error(f"[SENDNOW] Update exception for id={msg_id}: {e}")
+
+    await update.message.reply_text("All pending posts delivered.")
 
 # ----------- ERROR HANDLER: Logs full traceback -----------
 async def error_handler(update, context):
