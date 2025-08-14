@@ -29,6 +29,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Updated group targets - adjust these chat IDs to your actual groups
 GROUP_POST_TARGETS = {
     "group 1": {"chat_id": -1002393705231},
     "group 2": {"chat_id": -1002377255109},
@@ -45,19 +46,19 @@ SIGNOFF = 'Keep crushing it, Champ! Aurion'
 
 WELCOME = (
     "Welcome to 3C Thread To Success –your ultimate space for personal transformation and growth. "
-    "Whether you're dreaming big or taking small steps, we’re here to help you think it, do it, and own it!\n\n"
+    "Whether you're dreaming big or taking small steps, we're here to help you think it, do it, and own it!\n\n"
     "You've just joined a vibrant community built to turn your life into a purpose-driven adventure —filled with clarity, confidence, and courage. 🌱\n\n"
-    "💎 Here’s something we believe in deeply:\n"
-    "Every person is a diamond —even if you're still buried in the rough. Growth isn’t about becoming someone else... "
-    "it’s about polishing what’s already there. So take your time, trust the process, and shine brighter with every step.\n\n"
+    "💎 Here's something we believe in deeply:\n"
+    "Every person is a diamond —even if you're still buried in the rough. Growth isn't about becoming someone else... "
+    "it's about polishing what's already there. So take your time, trust the process, and shine brighter with every step.\n\n"
     "For everything you need, head over to:\n👉 https://anica-blip.github.io/3c-links/\n"
-    "There you’ll find our success links, tools, goal setting, challenges, and more. Or just send me a message —I’m Aurion, your guide along this journey.\n\n"
+    "There you'll find our success links, tools, goal setting, challenges, and more. Or just send me a message —I'm Aurion, your guide along this journey.\n\n"
     "Together, we rise. Together, we polish. Together, we shine. 💫\n"
-    "Let’s embark on this adventure and make a difference —one gem at a time."
+    "Let's embark on this adventure and make a difference —one gem at a time."
 )
 
 FAREWELL = (
-    "Sad to see you go. Remember, you’re always welcome back. "
+    "Sad to see you go. Remember, you're always welcome back. "
     "Stay strong and focused on polishing your diamond. 💎🔥"
 )
 
@@ -100,7 +101,7 @@ async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
         faqs = data.data or []
         if not faqs:
             await update.message.reply_text(
-                "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
+                "Sorry, Champ! Aurion can't fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
             )
             return
         keyboard = [
@@ -111,7 +112,7 @@ async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Supabase FAQ error: {e}")
         await update.message.reply_text(
-            "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
+            "Sorry, Champ! Aurion can't fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
 
 async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -125,7 +126,7 @@ async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Supabase FAQ button error: {e}")
         await update.callback_query.edit_message_text(
-            "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
+            "Sorry, Champ! Aurion can't fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
 
 async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -136,12 +137,12 @@ async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"💎 Aurion Fact:\n{random.choice(facts)}")
         else:
             await update.message.reply_text(
-                "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
+                "Sorry, Champ! Aurion can't fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
             )
     except Exception as e:
         logger.error(f"Supabase fact error: {e}")
         await update.message.reply_text(
-            "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
+            "Sorry, Champ! Aurion can't fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
 
 async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -150,7 +151,7 @@ async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
         resources_list = data.data or []
         if not resources_list:
             await update.message.reply_text(
-                "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
+                "Sorry, Champ! Aurion can't fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
             )
             return
         msg_lines = [f"[{item['title']}]({item['link']})" for item in resources_list]
@@ -158,7 +159,7 @@ async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Supabase resources error: {e}")
         await update.message.reply_text(
-            "Sorry, Champ! Aurion can’t fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
+            "Sorry, Champ! Aurion can't fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
 
 async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -177,8 +178,8 @@ async def farewell_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 KEYWORD_RESPONSES = [
     ("help", "If you need a hand, just type /ask followed by your question! Aurion's got your back."),
-    ("motivate", "You’re stronger than you think, Champ! Every step counts."),
-    ("thanks", "Anytime, Champ! Let’s keep that good energy rolling!"),
+    ("motivate", "You're stronger than you think, Champ! Every step counts."),
+    ("thanks", "Anytime, Champ! Let's keep that good energy rolling!"),
 ]
 
 async def keyword_responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -296,150 +297,182 @@ def extract_message_thread_id(link):
             return int(match.group('topicid'))
     return None
 
-# ----------- SCHEDULED JOB: Checks and sends ONLY 'now' messages -----------
-async def send_due_messages_job(context: ContextTypes.DEFAULT_TYPE):
+# ========== MAIN CHANGE: Using scheduled_posts table instead of message table ==========
+async def send_scheduled_posts():
+    """Main function for cron job - sends posts scheduled for current time"""
     now_utc = datetime.now(timezone.utc)
-    # Round to the current minute (ignore seconds/microseconds)
-    slot_start = now_utc.replace(second=0, microsecond=0)
-    slot_end = slot_start.replace(second=59, microsecond=999999)
-    slot_start_str = slot_start.isoformat()
-    slot_end_str = slot_end.isoformat()
-    logger.info(f"[SCHEDULED JOB] Triggered at {now_utc.isoformat()}")
-    logger.info(f"[SCHEDULED JOB] Slot window: {slot_start_str} to {slot_end_str}")
+    # Round to current minute for precise matching
+    current_minute = now_utc.replace(second=0, microsecond=0)
+    next_minute = current_minute.replace(minute=current_minute.minute + 1)
+    
+    current_time_str = current_minute.isoformat()
+    next_time_str = next_minute.isoformat()
+    
+    logger.info(f"[CRON JOB] Running at {now_utc.isoformat()}")
+    logger.info(f"[CRON JOB] Looking for posts scheduled between {current_time_str} and {next_time_str}")
 
     try:
-        # Query ONLY messages scheduled for this time slot (this exact minute)
-        result = supabase.table("message") \
+        # Query scheduled_posts table for posts due now
+        result = supabase.table("scheduled_posts") \
             .select("*") \
-            .gte("scheduled_at", slot_start_str) \
-            .lte("scheduled_at", slot_end_str) \
-            .is_("sent", False) \
+            .gte("scheduled_time", current_time_str) \
+            .lt("scheduled_time", next_time_str) \
+            .eq("status", "scheduled") \
             .execute()
-        messages = result.data or []
-        logger.info(f"[SCHEDULED JOB] Found {len(messages)} messages scheduled in this slot")
-        logger.info(f"[SCHEDULED JOB] Fetched messages: {messages}")
+        
+        posts = result.data or []
+        logger.info(f"[CRON JOB] Found {len(posts)} posts scheduled for this time")
+        
     except Exception as e:
-        logger.error(f"[SCHEDULED JOB] Supabase error: {e}")
+        logger.error(f"[CRON JOB] Supabase error: {e}")
         return
 
-    if not messages:
-        logger.info("[SCHEDULED JOB] No due messages to send in this slot.")
+    if not posts:
+        logger.info("[CRON JOB] No scheduled posts found for current time")
         return
 
-    for msg in messages:
-        group_key = msg.get("group_channel")
-        post_target = GROUP_POST_TARGETS.get(group_key)
-        content = msg.get("content")
-        msg_id = msg.get("id")
-        chat_id = post_target["chat_id"] if post_target else None
-        thread_link = msg.get("thread_id")
-        message_thread_id = extract_message_thread_id(thread_link)
-
-        logger.info(f"[SCHEDULED JOB] Processing message id={msg_id}, group_channel={group_key}, chat_id={chat_id}, thread_link={thread_link}, message_thread_id={message_thread_id}, content={content!r}")
-        if not post_target or not content:
-            logger.error(f"[SCHEDULED JOB] Skipping message id={msg_id}: missing group_channel or content")
-            continue
+    # Create Telegram application for sending messages
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    
+    for post in posts:
         try:
-            if message_thread_id:
-                await context.bot.send_message(chat_id=chat_id, text=content, message_thread_id=message_thread_id)
-            else:
-                await context.bot.send_message(chat_id=chat_id, text=content)
-            logger.info(f"[SCHEDULED JOB] Sent message id={msg_id} to chat_id={chat_id}, message_thread_id={message_thread_id}")
+            await send_single_post(app, post)
         except Exception as e:
-            logger.error(f"[SCHEDULED JOB] Failed to send message id={msg_id}: {e}")
-            continue
-        try:
-            result = supabase.table("message").update({"sent": True}).eq("id", msg_id).execute()
-            logger.info(f"[SCHEDULED JOB] Update result for id={msg_id}: {result.data}")
-            if not result.data:
-                logger.error(f"[SCHEDULED JOB] Update failed for id={msg_id}. Check field types, RLS, and permissions.")
-        except Exception as e:
-            logger.error(f"[SCHEDULED JOB] Update exception for id={msg_id}: {e}")
+            logger.error(f"[CRON JOB] Failed to process post {post.get('id')}: {e}")
 
-# ----------- SCHEDULER SETUP: Four times daily, every day - UTC Aware -----------
-from datetime import timezone as dt_timezone
-
-def schedule_daily_jobs(job_queue):
-    # Schedule jobs at 08:00, 12:00, 17:00, 21:00 UTC every day
-    times = [
-        time(8, 0, tzinfo=timezone.utc),
-        time(12, 0, tzinfo=timezone.utc),
-        time(17, 0, tzinfo=timezone.utc),
-        time(21, 0, tzinfo=timezone.utc)
-    ]
-    for t in times:
-        job_queue.run_daily(send_due_messages_job, t, days=(0,1,2,3,4,5,6))
-    logger.info("[SCHEDULER] Jobs scheduled for 08:00, 12:00, 17:00, 21:00 UTC (every day, UTC aware)")
-
-# ----------- MANUAL TRIGGER: /sendnow in Telegram -----------
-async def sendnow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    now_utc = datetime.now(timezone.utc)
-    now_utc_str = now_utc.isoformat()
+async def send_single_post(app, post):
+    """Send a single scheduled post"""
+    post_id = post.get("id")
+    content = post.get("content")
+    target_group = post.get("target_group", "").lower()
+    target_thread = post.get("target_thread")
+    character_name = post.get("character_name", "Aurion")
+    
+    logger.info(f"[CRON JOB] Processing post {post_id}: target_group={target_group}, character={character_name}")
+    
+    if not content:
+        logger.error(f"[CRON JOB] Post {post_id} has no content, skipping")
+        return
+    
+    # Map target_group to chat_id
+    chat_id = None
+    if "group 1" in target_group or "1" in target_group:
+        chat_id = GROUP_POST_TARGETS["group 1"]["chat_id"]
+    elif "group 2" in target_group or "2" in target_group:
+        chat_id = GROUP_POST_TARGETS["group 2"]["chat_id"]
+    
+    if not chat_id:
+        logger.error(f"[CRON JOB] Post {post_id}: Unknown target_group '{target_group}', skipping")
+        return
+    
+    # Extract thread ID if specified
+    message_thread_id = None
+    if target_thread:
+        message_thread_id = extract_message_thread_id(target_thread)
+    
     try:
-        # This version sends ALL unsent messages scheduled for now or earlier
-        result = supabase.table("message").select("*").lte("scheduled_at", now_utc_str).is_("sent", False).execute()
-        messages = result.data or []
+        # Send the message
+        if message_thread_id:
+            await app.bot.send_message(
+                chat_id=chat_id, 
+                text=content, 
+                message_thread_id=message_thread_id
+            )
+            logger.info(f"[CRON JOB] Sent post {post_id} to chat {chat_id}, thread {message_thread_id}")
+        else:
+            await app.bot.send_message(chat_id=chat_id, text=content)
+            logger.info(f"[CRON JOB] Sent post {post_id} to chat {chat_id}")
+        
+        # Mark as sent in database
+        supabase.table("scheduled_posts") \
+            .update({
+                "status": "sent", 
+                "sent_at": datetime.now(timezone.utc).isoformat()
+            }) \
+            .eq("id", post_id) \
+            .execute()
+            
+        logger.info(f"[CRON JOB] Successfully updated post {post_id} status to 'sent'")
+        
+    except Exception as e:
+        logger.error(f"[CRON JOB] Failed to send post {post_id}: {e}")
+        # Mark as failed
+        try:
+            supabase.table("scheduled_posts") \
+                .update({
+                    "status": "failed",
+                    "error_message": str(e)[:500]  # Limit error message length
+                }) \
+                .eq("id", post_id) \
+                .execute()
+        except Exception as update_error:
+            logger.error(f"[CRON JOB] Failed to update error status for post {post_id}: {update_error}")
+
+# ========== MANUAL TRIGGER for testing ==========
+async def sendnow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Manual command to send all pending scheduled posts"""
+    now_utc = datetime.now(timezone.utc)
+    
+    try:
+        # Get all posts that should have been sent by now
+        result = supabase.table("scheduled_posts") \
+            .select("*") \
+            .lte("scheduled_time", now_utc.isoformat()) \
+            .eq("status", "scheduled") \
+            .execute()
+        
+        posts = result.data or []
+        
     except Exception as e:
         logger.error(f"[SENDNOW] Supabase error: {e}")
-        await update.message.reply_text("Sorry Champ, error fetching messages.")
+        await update.message.reply_text("Sorry Champ, error fetching scheduled posts.")
         return
 
-    if not messages:
-        await update.message.reply_text("No pending posts to send.")
+    if not posts:
+        await update.message.reply_text("No pending posts found to send.")
         return
 
-    for msg in messages:
-        group_key = msg.get("group_channel")
-        post_target = GROUP_POST_TARGETS.get(group_key)
-        content = msg.get("content")
-        msg_id = msg.get("id")
-        chat_id = post_target["chat_id"] if post_target else None
-        thread_link = msg.get("thread_id")
-        message_thread_id = extract_message_thread_id(thread_link)
-        if not post_target or not content:
-            continue
+    sent_count = 0
+    for post in posts:
         try:
-            if message_thread_id:
-                await context.bot.send_message(chat_id=chat_id, text=content, message_thread_id=message_thread_id)
-            else:
-                await context.bot.send_message(chat_id=chat_id, text=content)
+            await send_single_post(context.application, post)
+            sent_count += 1
         except Exception as e:
-            logger.error(f"[SENDNOW] Failed to send message id={msg_id}: {e}")
-            continue
-        try:
-            supabase.table("message").update({"sent": True}).eq("id", msg_id).execute()
-        except Exception as e:
-            logger.error(f"[SENDNOW] Update exception for id={msg_id}: {e}")
+            logger.error(f"[SENDNOW] Failed to send post {post.get('id')}: {e}")
 
-    await update.message.reply_text("All pending posts delivered.")
+    await update.message.reply_text(f"Sent {sent_count} out of {len(posts)} pending posts.")
 
-# ----------- ERROR HANDLER: Logs full traceback -----------
+# ========== ERROR HANDLER ==========
 async def error_handler(update, context):
     logger.error("Exception while handling an update:", exc_info=context.error)
     if context.error:
         tb_str = ''.join(traceback.format_exception(None, context.error, context.error.__traceback__))
         logger.error(f"Traceback:\n{tb_str}")
-        print("Exception while handling an update:", context.error)
-        print(tb_str)
     else:
         logger.error("No exception information available (context.error is None)")
-        print("No exception information available (context.error is None)")
 
+# ========== MAIN FUNCTION FOR CRON MODE ==========
 def main():
+    """Main function - can run as interactive bot OR as cron job"""
+    
+    # Check environment variables
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
-        logger.error("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
-        print("One or more environment variables not set (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY).")
+        logger.error("Missing environment variables: TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY")
         return
 
-    import time as pytime
-    from datetime import datetime
-    print("Server local time:", pytime.strftime("%Y-%m-%d %H:%M:%S", pytime.localtime()))
-    print("Server UTC time:", pytime.strftime("%Y-%m-%d %H:%M:%S", pytime.gmtime()))
-    print("Python datetime.now():", datetime.now())
-    print("Python datetime.now(timezone.utc):", datetime.now(timezone.utc))
-    print("TZ environment variable:", os.environ.get("TZ"))
+    # Check if running as cron job (environment variable CRON_MODE=true)
+    if os.getenv("CRON_MODE", "").lower() == "true":
+        logger.info("Running in CRON MODE - sending scheduled posts only")
+        import asyncio
+        asyncio.run(send_scheduled_posts())
+        return
 
+    # Otherwise run as interactive Telegram bot
+    logger.info("Running in INTERACTIVE MODE - full bot functionality")
+    
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    
+    # Add all command handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ask", ask))
     app.add_handler(CommandHandler("faq", faq))
@@ -454,11 +487,10 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
-    app.add_handler(CommandHandler("sendnow", sendnow))
+    app.add_handler(CommandHandler("sendnow", sendnow_command))
     app.add_error_handler(error_handler)
 
-    schedule_daily_jobs(app.job_queue)
-    print("Aurion is polling. Press Ctrl+C to stop.")
+    logger.info("Aurion bot starting in interactive mode...")
     app.run_polling()
 
 if __name__ == "__main__":
