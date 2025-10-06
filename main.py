@@ -11,6 +11,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     filters,
+    JobQueue,
 )
 from openai import OpenAI
 from supabase import create_client, Client
@@ -298,8 +299,9 @@ def extract_message_thread_id(link):
     return None
 
 # ========== MAIN CHANGE: Using scheduled_posts table instead of message table ==========
-async def send_scheduled_posts():
-    """Main function for cron job - sends posts scheduled for current time"""
+async def send_scheduled_posts(context: ContextTypes.DEFAULT_TYPE = None):
+    """Main function for cron job - sends posts scheduled for current time
+    Can be called as a job callback (with context) or standalone"""
     now_utc = datetime.now(timezone.utc)
     # Round to current minute for precise matching
     current_minute = now_utc.replace(second=0, microsecond=0)
@@ -308,8 +310,8 @@ async def send_scheduled_posts():
     current_time_str = current_minute.isoformat()
     next_time_str = next_minute.isoformat()
     
-    logger.info(f"[CRON JOB] Running at {now_utc.isoformat()}")
-    logger.info(f"[CRON JOB] Looking for posts scheduled between {current_time_str} and {next_time_str}")
+    logger.info(f"[AUTO-SCHEDULER] Running at {now_utc.isoformat()}")
+    logger.info(f"[AUTO-SCHEDULER] Looking for posts scheduled between {current_time_str} and {next_time_str}")
 
     try:
         # Query scheduled_posts table for posts due now
@@ -321,24 +323,27 @@ async def send_scheduled_posts():
             .execute()
         
         posts = result.data or []
-        logger.info(f"[CRON JOB] Found {len(posts)} posts scheduled for this time")
+        logger.info(f"[AUTO-SCHEDULER] Found {len(posts)} posts scheduled for this time")
         
     except Exception as e:
-        logger.error(f"[CRON JOB] Supabase error: {e}")
+        logger.error(f"[AUTO-SCHEDULER] Supabase error: {e}")
         return
 
     if not posts:
-        logger.info("[CRON JOB] No scheduled posts found for current time")
+        logger.info("[AUTO-SCHEDULER] No scheduled posts found for current time")
         return
 
-    # Create Telegram application for sending messages
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    # Use the application from context if available, otherwise create one
+    if context and context.application:
+        app = context.application
+    else:
+        app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
     for post in posts:
         try:
             await send_single_post(app, post)
         except Exception as e:
-            logger.error(f"[CRON JOB] Failed to process post {post.get('id')}: {e}")
+            logger.error(f"[AUTO-SCHEDULER] Failed to process post {post.get('id')}: {e}")
 
 async def send_single_post(app, post):
     """Send a single scheduled post"""
@@ -489,6 +494,21 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
     app.add_handler(CommandHandler("sendnow", sendnow_command))
     app.add_error_handler(error_handler)
+
+    # Add automatic scheduled post checker - runs at specific times daily
+    # Times: 9:00 AM, 12:00 PM, 3:00 PM, 6:00 PM, 9:00 PM UK time (UTC+1 currently)
+    # Note: Adjust hours by -1 to convert UK time to UTC
+    job_queue = app.job_queue
+    check_times = [
+        time(hour=8, minute=0, tzinfo=timezone.utc),   # 9 AM UK (8 AM UTC)
+        time(hour=11, minute=0, tzinfo=timezone.utc),  # 12 PM UK (11 AM UTC)
+        time(hour=14, minute=0, tzinfo=timezone.utc),  # 3 PM UK (2 PM UTC)
+        time(hour=17, minute=0, tzinfo=timezone.utc),  # 6 PM UK (5 PM UTC)
+        time(hour=20, minute=0, tzinfo=timezone.utc),  # 9 PM UK (8 PM UTC)
+    ]
+    for check_time in check_times:
+        job_queue.run_daily(send_scheduled_posts, check_time)
+    logger.info("✅ Automatic scheduler enabled - checking at 9AM, 12PM, 3PM, 6PM, 9PM UK time")
 
     logger.info("Aurion bot starting in interactive mode...")
     app.run_polling()
