@@ -1,3 +1,8 @@
 supabase
 openai
 python-telegram-bot[job-queue]
+
+requests
+
+# That's it - just add this one line to your existing requirements.txt file
+# If requests is already there, you don't need to add it again
