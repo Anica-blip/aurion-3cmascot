@@ -513,5 +513,9 @@ def main():
     logger.info("Aurion bot starting in interactive mode...")
     app.run_polling()
 
+# Start scheduled posts runner (independent background job)
+from scheduled_posts_runner import start_scheduler
+start_scheduler()
+
 if __name__ == "__main__":
     main()
