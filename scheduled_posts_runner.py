@@ -26,8 +26,10 @@ def call_gateway():
     db_url = os.getenv("CRON_SUPABASE_DB_URL")
     password = os.getenv("CRON_RUNNER_PASSWORD")
     service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")  # ✅ Aurion bot (same as Render Cron)
+    system_user_id = os.getenv("SYSTEM_USER_ID", "aurion-background")
     
-    if not all([gateway_url, db_url, password, service_role_key]):
+    if not all([gateway_url, db_url, password, service_role_key, bot_token]):
         print("⚠️  Scheduled posts: Missing environment variables, skipping...")
         return
     
@@ -43,6 +45,8 @@ def call_gateway():
                 "service_type": "Render Background/Aurion",
                 "db_url": db_url,
                 "service_role_key": service_role_key,
+                "bot_token": bot_token,
+                "system_user_id": system_user_id,
             },
             timeout=60
         )
@@ -86,3 +90,4 @@ def start_scheduler():
     """Start the scheduler in a background thread"""
     thread = threading.Thread(target=scheduler_loop, daemon=True)
     thread.start()
+    
