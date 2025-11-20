@@ -1,5 +1,5 @@
 """
-Render Background Worker - Direct Supabase Connection
+Render Background Worker - Direct PostgreSQL Connection
 Service Type: Render Background/Aurion
 Bot Token: TELEGRAM_BOT_TOKEN (Aurion bot)
 TIMEZONE: WEST (UTC+1)
@@ -8,14 +8,14 @@ import os
 import time
 import threading
 from datetime import datetime, timezone, timedelta
-from supabase import create_client, Client
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import requests
 
 # ============================================
 # ENVIRONMENT VARIABLES
 # ============================================
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 SERVICE_TYPE = "Render Background/Aurion"
@@ -27,22 +27,28 @@ last_execution = None
 # VALIDATE ENVIRONMENT VARIABLES
 # ============================================
 print("\n--- ENVIRONMENT VARIABLE CHECK ---")
-if not all([SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TELEGRAM_BOT_TOKEN]):
+if not all([SUPABASE_DB_URL, TELEGRAM_BOT_TOKEN]):
     print("❌ Missing environment variables:")
-    print(f"  SUPABASE_URL: {'SET' if SUPABASE_URL else 'MISSING'}")
-    print(f"  SUPABASE_SERVICE_ROLE_KEY: {'SET' if SUPABASE_SERVICE_ROLE_KEY else 'MISSING'}")
+    print(f"  SUPABASE_DB_URL: {'SET' if SUPABASE_DB_URL else 'MISSING'}")
     print(f"  TELEGRAM_BOT_TOKEN: {'SET' if TELEGRAM_BOT_TOKEN else 'MISSING'}")
     exit(1)
 
 print("✅ All required environment variables are set\n")
 
 # ============================================
-# CREATE SUPABASE CLIENT
+# DATABASE CONNECTION
 # ============================================
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+def get_db_connection():
+    """Create a new PostgreSQL database connection"""
+    try:
+        conn = psycopg2.connect(SUPABASE_DB_URL, cursor_factory=RealDictCursor)
+        return conn
+    except Exception as e:
+        print(f"❌ Database connection failed: {str(e)}")
+        raise
 
 print(f"[{datetime.now(WEST).isoformat()}] Render Background Worker initialized")
-print(f"Supabase URL: {SUPABASE_URL}")
+print(f"Database: PostgreSQL Direct Connection")
 print(f"Service Type: {SERVICE_TYPE}")
 print(f"Timezone: WEST (UTC+1)")
 print(f"Execution Times: {EXECUTION_TIMES}")
@@ -207,11 +213,13 @@ def post_to_telegram(post):
         }
 
 # ============================================
-# CORE PROCESSING FUNCTIONS
+# CORE PROCESSING FUNCTIONS (PostgreSQL)
 # ============================================
 
 def claim_jobs(limit=50):
     """Query and claim jobs from scheduled_posts table"""
+    conn = None
+    cursor = None
     try:
         now_utc = datetime.now(timezone.utc)
         now_west = now_utc.astimezone(WEST)
@@ -228,60 +236,64 @@ def claim_jobs(limit=50):
         print(f"Service Type: '{SERVICE_TYPE}'")
         print(f"{'='*60}\n")
         
-        # Get all pending posts
-        response = supabase.table('scheduled_posts')\
-            .select('*')\
-            .eq('service_type', SERVICE_TYPE)\
-            .eq('posting_status', 'pending')\
-            .execute()
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
-        all_posts = response.data
+        # Query scheduled_posts with PostgreSQL
+        query = """
+            SELECT * FROM scheduled_posts 
+            WHERE service_type = %s 
+            AND posting_status = 'scheduled'
+            AND scheduled_date = %s
+            AND scheduled_time <= %s
+            ORDER BY scheduled_time ASC
+            LIMIT %s
+        """
         
-        if not all_posts:
-            print(f"⚠️ No pending posts for '{SERVICE_TYPE}'")
+        cursor.execute(query, (SERVICE_TYPE, current_date, current_time, limit))
+        posts = cursor.fetchall()
+        
+        if not posts:
+            print("No pending jobs found")
             return []
         
-        print(f"Found {len(all_posts)} pending posts with service_type '{SERVICE_TYPE}'")
+        print(f"Found {len(posts)} pending job(s)")
         
-        # Filter for due posts
-        due_posts = []
-        for post in all_posts:
-            post_date_full = post['scheduled_date']
-            post_date = post_date_full.split('T')[0]
-            post_time = post['scheduled_time']
-            
-            is_due = (post_date < current_date) or (post_date == current_date and post_time <= current_time)
-            
-            if is_due:
-                print(f"✅ DUE: Post {post['id']} - Date: {post_date}, Time: {post_time}")
-                due_posts.append(post)
+        # Claim jobs by updating status to 'processing'
+        post_ids = [post['id'] for post in posts]
         
-        if not due_posts:
-            print("⚠️ No posts due yet")
-            return []
+        update_query = """
+            UPDATE scheduled_posts 
+            SET posting_status = 'processing'
+            WHERE id = ANY(%s) AND service_type = %s
+        """
         
-        print(f"\n📋 {len(due_posts)} posts are due for processing")
+        cursor.execute(update_query, (post_ids, SERVICE_TYPE))
+        conn.commit()
         
-        # Claim the due posts (limit to max)
-        posts_to_process = due_posts[:limit]
-        claimed_ids = [post['id'] for post in posts_to_process]
+        print(f"✅ Claimed {len(posts)} job(s) for processing")
         
-        supabase.table('scheduled_posts')\
-            .update({'post_status': 'pending'})\
-            .in_('id', claimed_ids)\
-            .eq('service_type', SERVICE_TYPE)\
-            .execute()
+        # Convert RealDictRow to regular dict for easier handling
+        posts_to_process = [dict(post) for post in posts]
         
-        print(f"✅ Claimed {len(claimed_ids)} jobs\n")
         return posts_to_process
         
     except Exception as e:
         print(f"Error in claim_jobs: {str(e)}")
+        if conn:
+            conn.rollback()
         raise
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 def process_post(post):
     """Process a single post"""
+    conn = None
+    cursor = None
     now = datetime.now(timezone.utc)
     print(f"\n--- Processing Post {post['id']} ---")
     
@@ -299,16 +311,18 @@ def process_post(post):
         
         external_post_id = post_result.get('post_id', 'unknown')
         
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
         # Update scheduled_posts
-        supabase.table('scheduled_posts')\
-            .update({
-                'posting_status': 'sent',
-                'post_status': 'sent',
-                'updated_at': now.isoformat()
-            })\
-            .eq('id', post['id'])\
-            .eq('service_type', SERVICE_TYPE)\
-            .execute()
+        update_query = """
+            UPDATE scheduled_posts
+            SET posting_status = 'sent', post_status = 'sent', updated_at = %s
+            WHERE id = %s AND service_type = %s
+        """
+        
+        cursor.execute(update_query, (now.isoformat(), post['id'], SERVICE_TYPE))
+        conn.commit()
         
         # Insert into dashboard_posts
         post_content = post.get('post_content', {})
@@ -348,21 +362,43 @@ def process_post(post):
         }
         
         try:
-            supabase.table('dashboard_posts').insert(dashboard_post).execute()
+            insert_query = """
+                INSERT INTO dashboard_posts (
+                    scheduled_post_id, social_platform, post_content, external_post_id, posted_at, url,
+                    channel_group_id, thread_id, character_profile, name, username, role, character_avatar,
+                    title, description, hashtags, keywords, cta, theme, audience, voice_style, media_type,
+                    template_type, scheduled_date, scheduled_time, user_id, created_by, content_id, 
+                    platform_id, media_files, selected_platforms
+                ) VALUES (
+                    %(scheduled_post_id)s, %(social_platform)s, %(post_content)s, %(external_post_id)s, 
+                    %(posted_at)s, %(url)s, %(channel_group_id)s, %(thread_id)s, %(character_profile)s, 
+                    %(name)s, %(username)s, %(role)s, %(character_avatar)s, %(title)s, %(description)s, 
+                    %(hashtags)s, %(keywords)s, %(cta)s, %(theme)s, %(audience)s, %(voice_style)s, 
+                    %(media_type)s, %(template_type)s, %(scheduled_date)s, %(scheduled_time)s, %(user_id)s, 
+                    %(created_by)s, %(content_id)s, %(platform_id)s, %(media_files)s, %(selected_platforms)s
+                )
+            """
+            
+            cursor.execute(insert_query, dashboard_post)
+            conn.commit()
             print(f"✅ Inserted into dashboard_posts")
         except Exception as e:
             print(f"⚠️ Failed to insert into dashboard_posts: {str(e)}")
+            conn.rollback()
         
         # Delete from scheduled_posts
         try:
-            supabase.table('scheduled_posts')\
-                .delete()\
-                .eq('id', post['id'])\
-                .eq('service_type', SERVICE_TYPE)\
-                .execute()
+            delete_query = """
+                DELETE FROM scheduled_posts
+                WHERE id = %s AND service_type = %s
+            """
+            
+            cursor.execute(delete_query, (post['id'], SERVICE_TYPE))
+            conn.commit()
             print(f"✅ Deleted post {post['id']} from scheduled_posts")
         except Exception as e:
             print(f"⚠️ Failed to delete from scheduled_posts: {str(e)}")
+            conn.rollback()
         
         print(f"✅ Post {post['id']} completed successfully")
         
@@ -374,24 +410,45 @@ def process_post(post):
         new_attempts = (post.get('attempts') or 0) + 1
         should_retry = new_attempts < max_retries
         
-        update_data = {
-            'post_status': 'failed',
-            'attempts': new_attempts
-        }
-        
-        if not should_retry:
-            update_data['posting_status'] = 'failed'
-        
         try:
-            supabase.table('scheduled_posts')\
-                .update(update_data)\
-                .eq('id', post['id'])\
-                .eq('service_type', SERVICE_TYPE)\
-                .execute()
+            if not conn:
+                conn = get_db_connection()
+                cursor = conn.cursor()
+            
+            update_data = {
+                'post_status': 'failed',
+                'attempts': new_attempts
+            }
+            
+            if not should_retry:
+                update_data['posting_status'] = 'failed'
+            
+            update_query = """
+                UPDATE scheduled_posts
+                SET post_status = %s, attempts = %s
+            """
+            params = [update_data['post_status'], update_data['attempts']]
+            
+            if not should_retry:
+                update_query += ", posting_status = %s"
+                params.append(update_data['posting_status'])
+            
+            update_query += " WHERE id = %s AND service_type = %s"
+            params.extend([post['id'], SERVICE_TYPE])
+            
+            cursor.execute(update_query, params)
+            conn.commit()
         except Exception as fail_error:
             print(f"Failed to update error status: {str(fail_error)}")
+            if conn:
+                conn.rollback()
         
         raise
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 def process_jobs():
