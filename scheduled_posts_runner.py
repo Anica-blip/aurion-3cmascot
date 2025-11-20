@@ -6,6 +6,7 @@ TIMEZONE: WEST (UTC+1)
 """
 import os
 import time
+import json
 import threading
 from datetime import datetime, timezone, timedelta
 import psycopg2
@@ -16,6 +17,7 @@ import requests
 # ENVIRONMENT VARIABLES
 # ============================================
 SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 SERVICE_TYPE = "Render Background/Aurion"
@@ -27,9 +29,10 @@ last_execution = None
 # VALIDATE ENVIRONMENT VARIABLES
 # ============================================
 print("\n--- ENVIRONMENT VARIABLE CHECK ---")
-if not all([SUPABASE_DB_URL, TELEGRAM_BOT_TOKEN]):
+if not all([SUPABASE_DB_URL, SUPABASE_SERVICE_ROLE_KEY, TELEGRAM_BOT_TOKEN]):
     print("❌ Missing environment variables:")
     print(f"  SUPABASE_DB_URL: {'SET' if SUPABASE_DB_URL else 'MISSING'}")
+    print(f"  SUPABASE_SERVICE_ROLE_KEY: {'SET' if SUPABASE_SERVICE_ROLE_KEY else 'MISSING'}")
     print(f"  TELEGRAM_BOT_TOKEN: {'SET' if TELEGRAM_BOT_TOKEN else 'MISSING'}")
     exit(1)
 
@@ -162,6 +165,156 @@ def send_telegram_photo(chat_id, photo_url, caption, thread_id=None):
     }
 
 
+def send_telegram_video(chat_id, video_url, caption, thread_id=None):
+    """Send video to Telegram"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
+    
+    payload = {
+        'chat_id': chat_id,
+        'video': video_url,
+        'caption': caption,
+        'parse_mode': 'HTML'
+    }
+    
+    if thread_id:
+        payload['message_thread_id'] = int(thread_id)
+    
+    response = requests.post(url, json=payload)
+    data = response.json()
+    
+    if not response.ok or not data.get('ok'):
+        return {
+            'success': False,
+            'error': data.get('description', f'HTTP {response.status_code}')
+        }
+    
+    return {
+        'success': True,
+        'message_id': data.get('result', {}).get('message_id')
+    }
+
+
+def send_telegram_animation(chat_id, animation_url, caption, thread_id=None):
+    """Send animation/GIF to Telegram"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendAnimation"
+    
+    payload = {
+        'chat_id': chat_id,
+        'animation': animation_url,
+        'caption': caption,
+        'parse_mode': 'HTML'
+    }
+    
+    if thread_id:
+        payload['message_thread_id'] = int(thread_id)
+    
+    response = requests.post(url, json=payload)
+    data = response.json()
+    
+    if not response.ok or not data.get('ok'):
+        return {
+            'success': False,
+            'error': data.get('description', f'HTTP {response.status_code}')
+        }
+    
+    return {
+        'success': True,
+        'message_id': data.get('result', {}).get('message_id')
+    }
+
+
+def send_telegram_document(chat_id, document_url, caption, thread_id=None):
+    """Send document to Telegram"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+    
+    payload = {
+        'chat_id': chat_id,
+        'document': document_url,
+        'caption': caption,
+        'parse_mode': 'HTML'
+    }
+    
+    if thread_id:
+        payload['message_thread_id'] = int(thread_id)
+    
+    response = requests.post(url, json=payload)
+    data = response.json()
+    
+    if not response.ok or not data.get('ok'):
+        return {
+            'success': False,
+            'error': data.get('description', f'HTTP {response.status_code}')
+        }
+    
+    return {
+        'success': True,
+        'message_id': data.get('result', {}).get('message_id')
+    }
+
+
+def detect_media_type(media_url, media_item=None):
+    """Detect media type from URL extension or media_item type field"""
+    # First check if media_item has explicit type field
+    if media_item and isinstance(media_item, dict):
+        media_type = media_item.get('type') or media_item.get('media_type') or media_item.get('mediaType')
+        if media_type:
+            media_type_lower = media_type.lower()
+            if 'video' in media_type_lower:
+                return 'video'
+            elif 'gif' in media_type_lower or 'animation' in media_type_lower:
+                return 'animation'
+            elif 'image' in media_type_lower or 'photo' in media_type_lower:
+                return 'photo'
+            elif 'document' in media_type_lower or 'file' in media_type_lower:
+                return 'document'
+    
+    # Fall back to URL extension detection
+    if not isinstance(media_url, str):
+        return 'photo'  # Default
+    
+    media_url_lower = media_url.lower()
+    
+    # Video extensions
+    if any(ext in media_url_lower for ext in ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv']):
+        return 'video'
+    
+    # Animation/GIF extensions
+    if '.gif' in media_url_lower:
+        return 'animation'
+    
+    # Document extensions
+    if any(ext in media_url_lower for ext in ['.pdf', '.doc', '.docx', '.txt', '.zip', '.rar', '.csv', '.xls', '.xlsx']):
+        return 'document'
+    
+    # Image extensions (default)
+    if any(ext in media_url_lower for ext in ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.svg']):
+        return 'photo'
+    
+    # Default to photo if no match
+    return 'photo'
+
+
+def parse_media_file(media_item):
+    """Parse media file from various JSON structures"""
+    if isinstance(media_item, str):
+        # Direct URL string
+        return media_item
+    
+    if isinstance(media_item, dict):
+        # Try various common key names
+        return (
+            media_item.get('url') or 
+            media_item.get('src') or 
+            media_item.get('supabaseUrl') or 
+            media_item.get('file_url') or
+            media_item.get('media_url') or
+            media_item.get('path') or
+            None
+        )
+    
+    return None
+
+
 def post_to_telegram(post):
     """Post content to Telegram based on media type"""
     try:
@@ -172,24 +325,61 @@ def post_to_telegram(post):
         if len(caption) > 1024:
             raise Exception(f"Caption too long ({len(caption)} chars). Please shorten content to under 1024 characters.")
         
+        # Parse media_files from various sources
         media_files = []
         
-        if post.get('media_files') and isinstance(post['media_files'], list):
-            media_files = post['media_files']
-        else:
-            post_content = post.get('post_content', {})
-            if post_content.get('media_files') and isinstance(post_content['media_files'], list):
-                media_files = post_content['media_files']
+        if post.get('media_files'):
+            if isinstance(post['media_files'], list):
+                media_files = post['media_files']
+            elif isinstance(post['media_files'], str):
+                # If media_files is a JSON string, try to parse it
+                try:
+                    media_files = json.loads(post['media_files'])
+                except:
+                    pass
         
+        # Fallback to post_content.media_files
+        if not media_files:
+            post_content = post.get('post_content', {})
+            if post_content.get('media_files'):
+                if isinstance(post_content['media_files'], list):
+                    media_files = post_content['media_files']
+                elif isinstance(post_content['media_files'], str):
+                    try:
+                        media_files = json.loads(post_content['media_files'])
+                    except:
+                        pass
+        
+        # If we have media, send with appropriate method
         if media_files:
             first_media = media_files[0]
-            media_url = first_media.get('url') or first_media.get('src') or first_media.get('supabaseUrl') or first_media
+            media_url = parse_media_file(first_media)
+            
+            if not media_url:
+                raise Exception('Could not extract media URL from media_files')
             
             if not isinstance(media_url, str):
                 raise Exception('Invalid media URL format')
             
-            print(f"🖼️ Uploading photo to Telegram: {media_url}")
-            result = send_telegram_photo(chat_id, media_url, caption, thread_id)
+            # Detect media type
+            media_type = detect_media_type(media_url, first_media)
+            
+            print(f"📎 Detected media type: {media_type}")
+            print(f"🔗 Media URL: {media_url}")
+            
+            # Send based on media type
+            if media_type == 'video':
+                print(f"🎥 Uploading video to Telegram")
+                result = send_telegram_video(chat_id, media_url, caption, thread_id)
+            elif media_type == 'animation':
+                print(f"🎬 Uploading animation/GIF to Telegram")
+                result = send_telegram_animation(chat_id, media_url, caption, thread_id)
+            elif media_type == 'document':
+                print(f"📄 Uploading document to Telegram")
+                result = send_telegram_document(chat_id, media_url, caption, thread_id)
+            else:  # photo
+                print(f"🖼️ Uploading photo to Telegram")
+                result = send_telegram_photo(chat_id, media_url, caption, thread_id)
         else:
             print('💬 Sending text-only message')
             result = send_telegram_message(chat_id, caption, thread_id)
