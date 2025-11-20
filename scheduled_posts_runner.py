@@ -27,9 +27,9 @@ last_execution = None
 # VALIDATE ENVIRONMENT VARIABLES
 # ============================================
 print("\n--- ENVIRONMENT VARIABLE CHECK ---")
-if not all([SUPABASE_DB_URL, SUPABASE_SERVICE_ROLE_KEY, TELEGRAM_BOT_TOKEN]):
+if not all([SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TELEGRAM_BOT_TOKEN]):
     print("❌ Missing environment variables:")
-    print(f"  SUPABASE_DB_URL: {'SET' if SUPABASE_DB_URL else 'MISSING'}")
+    print(f"  SUPABASE_URL: {'SET' if SUPABASE_URL else 'MISSING'}")
     print(f"  SUPABASE_SERVICE_ROLE_KEY: {'SET' if SUPABASE_SERVICE_ROLE_KEY else 'MISSING'}")
     print(f"  TELEGRAM_BOT_TOKEN: {'SET' if TELEGRAM_BOT_TOKEN else 'MISSING'}")
     exit(1)
@@ -39,10 +39,10 @@ print("✅ All required environment variables are set\n")
 # ============================================
 # CREATE SUPABASE CLIENT
 # ============================================
-supabase: Client = create_client(SUPABASE_DB_URL, SUPABASE_SERVICE_ROLE_KEY)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 print(f"[{datetime.now(WEST).isoformat()}] Render Background Worker initialized")
-print(f"Supabase URL: {SUPABASE_DB_URL}")
+print(f"Supabase URL: {SUPABASE_URL}")
 print(f"Service Type: {SERVICE_TYPE}")
 print(f"Timezone: WEST (UTC+1)")
 print(f"Execution Times: {EXECUTION_TIMES}")
