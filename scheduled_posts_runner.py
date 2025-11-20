@@ -14,7 +14,7 @@ import requests
 # ============================================
 # ENVIRONMENT VARIABLES
 # ============================================
-SUPABASE_URL = os.getenv("SUPABASE_DB_URL")
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
