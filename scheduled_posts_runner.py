@@ -40,7 +40,7 @@ print("✅ All required environment variables are set\n")
 # ============================================
 # CREATE SUPABASE CLIENT
 # ============================================
-supabase: Client = create_client(SUPABASE_DB_URL_URL, SUPABASE_SERVICE_ROLE_KEY)
+supabase: Client = create_client(SUPABASE_DB_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 print(f"[{datetime.now(WEST).isoformat()}] Render Background Worker initialized")
 print(f"Supabase URL: {SUPABASE_URL}")
