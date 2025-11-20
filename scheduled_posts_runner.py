@@ -730,13 +730,19 @@ def scheduler_loop():
 
 
 def start_scheduler():
-    """Start scheduler in background thread"""
+    """Start scheduler in background thread (non-blocking when imported)"""
     thread = threading.Thread(target=scheduler_loop, daemon=True)
     thread.start()
-    print(f"✅ Background scheduler thread started")
+    print(f"✅ Background scheduler thread started for '{SERVICE_TYPE}'")
+
+
+def start_scheduler_blocking():
+    """Start scheduler and keep main thread alive (for standalone mode)"""
+    start_scheduler()
     
     # Keep main thread alive
     try:
+        print("🔄 Running in standalone mode - press Ctrl+C to stop")
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
@@ -749,5 +755,5 @@ def start_scheduler():
 # ============================================
 
 if __name__ == "__main__":
-    start_scheduler()
+    start_scheduler_blocking()
     
