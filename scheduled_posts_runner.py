@@ -22,7 +22,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 SERVICE_TYPE = "Render Background/Aurion"
 WEST = timezone(timedelta(hours=1))
-EXECUTION_TIMES = ["09:00", "12:00", "19:00", "21:00"]
+EXECUTION_TIMES = ["09:00", "12:00", "14:00", "21:00"]
 last_execution = None
 
 # ============================================
