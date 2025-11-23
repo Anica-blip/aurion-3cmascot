@@ -4,7 +4,3 @@ python-telegram-bot[job-queue]
 requests
 psycopg2-binary
 
-requests
-
-# That's it - just add this one line to your existing requirements.txt file
-# If requests is already there, you don't need to add it again
