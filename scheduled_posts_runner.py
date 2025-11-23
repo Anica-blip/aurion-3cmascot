@@ -548,7 +548,12 @@ def process_post(post):
             'content_id': post.get('content_id'),
             'platform_id': post.get('platform_id'),
             'media_files': post.get('media_files') or post_content.get('media_files'),
-            'selected_platforms': post.get('selected_platforms') or post_content.get('selected_platforms')
+            'selected_platforms': post.get('selected_platforms') or post_content.get('selected_platforms'),
+            'platform': post.get('platform'),
+            'service_type': post.get('service_type'),
+            'platform_icon': post.get('platform_icon'),
+            'type': post.get('type'),
+            'status': post.get('status')
         }
         
         try:
@@ -558,14 +563,16 @@ def process_post(post):
                     channel_group_id, thread_id, character_profile, name, username, role, character_avatar,
                     title, description, hashtags, keywords, cta, theme, audience, voice_style, media_type,
                     template_type, scheduled_date, scheduled_time, user_id, created_by, content_id, 
-                    platform_id, media_files, selected_platforms
+                    platform_id, media_files, selected_platforms, platform, service_type, platform_icon, 
+                    type, status
                 ) VALUES (
                     %(scheduled_post_id)s, %(social_platform)s, %(post_content)s, %(external_post_id)s, 
                     %(posted_at)s, %(url)s, %(channel_group_id)s, %(thread_id)s, %(character_profile)s, 
                     %(name)s, %(username)s, %(role)s, %(character_avatar)s, %(title)s, %(description)s, 
                     %(hashtags)s, %(keywords)s, %(cta)s, %(theme)s, %(audience)s, %(voice_style)s, 
                     %(media_type)s, %(template_type)s, %(scheduled_date)s, %(scheduled_time)s, %(user_id)s, 
-                    %(created_by)s, %(content_id)s, %(platform_id)s, %(media_files)s, %(selected_platforms)s
+                    %(created_by)s, %(content_id)s, %(platform_id)s, %(media_files)s, %(selected_platforms)s,
+                    %(platform)s, %(service_type)s, %(platform_icon)s, %(type)s, %(status)s
                 )
             """
             
