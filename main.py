@@ -24,13 +24,48 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Primary Telegram / OpenAI env vars
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Supabase env vars (support multiple names / fallbacks)
+# The bot will prefer SUPABASE_DB_URL and SUPABASE_SECRET_KEY (server-only secret),
+# falling back to SUPABASE_SERVICE_ROLE_KEY or SUPABASE_URL/SUPABASE_KEY for compatibility.
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
+SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+# Decide which Supabase credentials to use (server-side preferred secrets first)
+if SUPABASE_DB_URL and SUPABASE_SECRET_KEY:
+    SUPABASE_URL_USED = SUPABASE_DB_URL
+    SUPABASE_KEY_USED = SUPABASE_SECRET_KEY
+    logger.info("Using SUPABASE_DB_URL and SUPABASE_SECRET_KEY for Supabase client (server-side secret).")
+elif SUPABASE_SERVICE_ROLE_KEY and SUPABASE_URL:
+    SUPABASE_URL_USED = SUPABASE_URL
+    SUPABASE_KEY_USED = SUPABASE_SERVICE_ROLE_KEY
+    logger.info("Using SUPABASE_SERVICE_ROLE_KEY for Supabase client (service role).")
+elif SUPABASE_URL and SUPABASE_KEY:
+    SUPABASE_URL_USED = SUPABASE_URL
+    SUPABASE_KEY_USED = SUPABASE_KEY
+    logger.info("Using SUPABASE_URL and SUPABASE_KEY for Supabase client (anon key).")
+else:
+    SUPABASE_URL_USED = None
+    SUPABASE_KEY_USED = None
+    logger.warning("No Supabase credentials found in environment. Supabase client will not be initialized.")
+
 client = OpenAI(api_key=OPENAI_API_KEY)
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+supabase: Client = None
+if SUPABASE_URL_USED and SUPABASE_KEY_USED:
+    try:
+        supabase = create_client(SUPABASE_URL_USED, SUPABASE_KEY_USED)
+        logger.info("Supabase client created successfully.")
+    except Exception as e:
+        logger.error(f"Failed to create Supabase client: {e}")
+else:
+    logger.error("Supabase not configured — commands that use the DB will fail until credentials are provided.")
 
 # Updated group targets - adjust these chat IDs to your actual groups
 GROUP_POST_TARGETS = {
@@ -75,6 +110,8 @@ def ensure_signoff_once(answer, signoff):
     return answer + ' ' + signoff
 
 def has_greeted(user_id):
+    if supabase is None:
+        return False
     try:
         result = supabase.table("greeted_users").select("user_id").eq("user_id", user_id).execute()
         return len(result.data) > 0
@@ -83,6 +120,8 @@ def has_greeted(user_id):
         return False
 
 def mark_greeted(user_id):
+    if supabase is None:
+        return
     try:
         supabase.table("greeted_users").insert({"user_id": user_id}).execute()
     except Exception as e:
@@ -105,6 +144,8 @@ def find_existing_table(candidates):
     Tries each name in candidates and returns the first name that the client can query
     (i.e., no error returned). This helps with schema/name mismatches.
     """
+    if supabase is None:
+        return None
     for name in candidates:
         try:
             res = supabase.table(name).select("1").limit(1).execute()
@@ -120,6 +161,9 @@ def verify_supabase_tables():
     At startup, check the FAQ and FACT table candidates and log what we find.
     This will surface if the table truly can't be found or if there's a permission error.
     """
+    if supabase is None:
+        logger.warning("verify_supabase_tables skipped: supabase client not initialized.")
+        return
     logger.info("Verifying Supabase tables for FAQ and FACT candidates...")
     for name in FAQ_TABLE_CANDIDATES + FACT_TABLE_CANDIDATES:
         try:
@@ -129,6 +173,8 @@ def verify_supabase_tables():
             logger.error(f"Startup check: exception checking table '{name}': {e}")
 
 def get_faq_answer(user_question):
+    if supabase is None:
+        return None
     try:
         table_name = find_existing_table(FAQ_TABLE_CANDIDATES)
         if not table_name:
@@ -144,6 +190,9 @@ def get_faq_answer(user_question):
         return None
 
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if supabase is None:
+        await update.message.reply_text("Database not configured. Admins: check SUPABASE_DB_URL / SUPABASE_SECRET_KEY.")
+        return
     try:
         # Run sync Supabase call in executor to avoid blocking
         loop = asyncio.get_event_loop()
@@ -173,6 +222,9 @@ async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if supabase is None:
+        await update.callback_query.edit_message_text("Database not configured. Admins: check Supabase env vars.")
+        return
     try:
         query = update.callback_query
         await query.answer()
@@ -197,6 +249,9 @@ async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if supabase is None:
+        await update.message.reply_text("Database not configured. Admins: check SUPABASE_DB_URL / SUPABASE_SECRET_KEY.")
+        return
     try:
         # Run sync Supabase call in executor
         loop = asyncio.get_event_loop()
@@ -222,6 +277,9 @@ async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if supabase is None:
+        await update.message.reply_text("Database not configured. Admins: check SUPABASE_DB_URL / SUPABASE_SECRET_KEY.")
+        return
     try:
         # Run sync Supabase call in executor
         loop = asyncio.get_event_loop()
@@ -385,6 +443,10 @@ async def dbstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Use this to diagnose whether responses are empty, contain an error object,
     or raise exceptions (e.g., permission issues due to RLS).
     """
+    if supabase is None:
+        await update.message.reply_text("Supabase client not configured (missing env vars).")
+        return
+
     loop = asyncio.get_event_loop()
 
     def check_tables():
@@ -426,9 +488,11 @@ def main():
     """Main function - can run as interactive bot OR as cron job"""
     
     # Check environment variables
-    if not TELEGRAM_TOKEN or not OPENAI_API_KEY or not SUPABASE_URL or not SUPABASE_KEY:
-        logger.error("Missing environment variables: TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY")
+    if not TELEGRAM_TOKEN or not OPENAI_API_KEY:
+        logger.error("Missing environment variables: TELEGRAM_BOT_TOKEN or OPENAI_API_KEY")
         return
+    if supabase is None:
+        logger.warning("Supabase client not configured. DB commands will fail until env vars are set.")
 
     # Run as interactive Telegram bot
     logger.info("Running in INTERACTIVE MODE - full bot functionality")
@@ -453,7 +517,7 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("hashtags", hashtags))
     app.add_handler(CommandHandler("topics", topics))
-    # Add the new debug command
+    # Add the debug command
     app.add_handler(CommandHandler("dbstatus", dbstatus))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
