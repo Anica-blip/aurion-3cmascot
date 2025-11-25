@@ -1,4 +1,4 @@
-"""
+""" 
 Render Background Worker - Direct PostgreSQL Connection
 Service Type: Render Background/Aurion
 Bot Token: TELEGRAM_BOT_TOKEN (Aurion bot)
@@ -17,6 +17,7 @@ import requests
 # ENVIRONMENT VARIABLES
 # ============================================
 SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
+# SUPABASE_SERVICE_ROLE_KEY may be present (used by other components) but is optional for direct DB mode
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
@@ -29,14 +30,24 @@ last_execution = None
 # VALIDATE ENVIRONMENT VARIABLES
 # ============================================
 print("\n--- ENVIRONMENT VARIABLE CHECK ---")
-if not all([SUPABASE_DB_URL, SUPABASE_SERVICE_ROLE_KEY, TELEGRAM_BOT_TOKEN]):
+missing = []
+if not SUPABASE_DB_URL:
+    missing.append("SUPABASE_DB_URL")
+if not TELEGRAM_BOT_TOKEN:
+    missing.append("TELEGRAM_BOT_TOKEN")
+
+if missing:
     print("❌ Missing environment variables:")
-    print(f"  SUPABASE_DB_URL: {'SET' if SUPABASE_DB_URL else 'MISSING'}")
-    print(f"  SUPABASE_SERVICE_ROLE_KEY: {'SET' if SUPABASE_SERVICE_ROLE_KEY else 'MISSING'}")
-    print(f"  TELEGRAM_BOT_TOKEN: {'SET' if TELEGRAM_BOT_TOKEN else 'MISSING'}")
+    for m in missing:
+        print(f"  {m}: MISSING")
+    print("\nThis service requires SUPABASE_DB_URL (Postgres DSN) and TELEGRAM_BOT_TOKEN to run.")
     exit(1)
 
-print("✅ All required environment variables are set\n")
+# Warn but do NOT require SUPABASE_SERVICE_ROLE_KEY for direct DB operation
+print(f"  SUPABASE_DB_URL: {'SET' if SUPABASE_DB_URL else 'MISSING'}")
+print(f"  SUPABASE_SERVICE_ROLE_KEY: {'SET' if SUPABASE_SERVICE_ROLE_KEY else 'NOT SET (optional for direct DB)'}")
+print(f"  TELEGRAM_BOT_TOKEN: {'SET' if TELEGRAM_BOT_TOKEN else 'MISSING'}")
+print("✅ Required environment variables are set\n")
 
 # ============================================
 # DATABASE CONNECTION
@@ -51,7 +62,7 @@ def get_db_connection():
         raise
 
 print(f"[{datetime.now(WEST).isoformat()}] Render Background Worker initialized")
-print(f"Database: PostgreSQL Direct Connection")
+print(f"Database: PostgreSQL Direct Connection (SUPABASE_DB_URL)")
 print(f"Service Type: {SERVICE_TYPE}")
 print(f"Timezone: WEST (UTC+1)")
 print(f"Execution Times: {EXECUTION_TIMES}")
@@ -647,7 +658,6 @@ def process_post(post):
         if conn:
             conn.close()
 
-
 def process_jobs():
     """Process all due jobs"""
     start_time = datetime.now(timezone.utc)
@@ -742,7 +752,6 @@ def start_scheduler():
     thread.start()
     print(f"✅ Background scheduler thread started for '{SERVICE_TYPE}'")
 
-
 def start_scheduler_blocking():
     """Start scheduler and keep main thread alive (for standalone mode)"""
     start_scheduler()
@@ -756,11 +765,9 @@ def start_scheduler_blocking():
         print("\n⚠️ Shutting down...")
         exit(0)
 
-
 # ============================================
 # MAIN EXECUTION
 # ============================================
-
 if __name__ == "__main__":
     start_scheduler_blocking()
     
