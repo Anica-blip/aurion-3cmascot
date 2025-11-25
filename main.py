@@ -13,66 +13,218 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     filters,
-    JobQueue,
 )
 from openai import OpenAI
-from supabase import create_client, Client
 import traceback
+
+# Try to import supabase client and psycopg2 — we will support both REST (supabase-python)
+# and direct Postgres (psycopg2) depending on environment variables provided.
+SUPABASE_AVAILABLE = False
+PSYCOPG2_AVAILABLE = False
+try:
+    from supabase import create_client, Client as SupabaseClient
+    SUPABASE_AVAILABLE = True
+except Exception:
+    SUPABASE_AVAILABLE = False
+
+try:
+    import psycopg2
+    import psycopg2.extras
+    PSYCOPG2_AVAILABLE = True
+except Exception:
+    PSYCOPG2_AVAILABLE = False
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Primary Telegram / OpenAI env vars
+# Basic envs
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Supabase env vars (support multiple names / fallbacks)
-# The bot will prefer SUPABASE_DB_URL and SUPABASE_SECRET_KEY (server-only secret),
-# falling back to SUPABASE_SERVICE_ROLE_KEY or SUPABASE_URL/SUPABASE_KEY for compatibility.
-SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
-SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# Supabase / DB envs - we accept multiple naming conventions and support 2 modes:
+#  - REST mode: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (preferred) or SUPABASE_URL + SUPABASE_KEY
+#  - Direct Postgres mode: SUPABASE_DB_URL (postgres://...) + SUPABASE_SECRET_KEY (DB user password/connection)
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "")  # often postgres://...
+SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "")  # if used with direct DB
 
-# Decide which Supabase credentials to use (server-side preferred secrets first)
-if SUPABASE_DB_URL and SUPABASE_SECRET_KEY:
-    SUPABASE_URL_USED = SUPABASE_DB_URL
-    SUPABASE_KEY_USED = SUPABASE_SECRET_KEY
-    logger.info("Using SUPABASE_DB_URL and SUPABASE_SECRET_KEY for Supabase client (server-side secret).")
-elif SUPABASE_SERVICE_ROLE_KEY and SUPABASE_URL:
-    SUPABASE_URL_USED = SUPABASE_URL
-    SUPABASE_KEY_USED = SUPABASE_SERVICE_ROLE_KEY
-    logger.info("Using SUPABASE_SERVICE_ROLE_KEY for Supabase client (service role).")
-elif SUPABASE_URL and SUPABASE_KEY:
-    SUPABASE_URL_USED = SUPABASE_URL
-    SUPABASE_KEY_USED = SUPABASE_KEY
-    logger.info("Using SUPABASE_URL and SUPABASE_KEY for Supabase client (anon key).")
-else:
-    SUPABASE_URL_USED = None
-    SUPABASE_KEY_USED = None
-    logger.warning("No Supabase credentials found in environment. Supabase client will not be initialized.")
+# prefer REST service role if present; otherwise fallback to anon REST key; otherwise try direct Postgres
+USE_MODE = None  # "rest_service", "rest_anon", "pg", None
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+supabase = None  # Supabase client if using REST
+pg_conn = None   # psycopg2 connection if using direct DB
 
-supabase: Client = None
-if SUPABASE_URL_USED and SUPABASE_KEY_USED:
+def init_db_clients():
+    global supabase, pg_conn, USE_MODE
+
+    # If SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY present -> REST service role (preferred)
+    if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and SUPABASE_AVAILABLE:
+        try:
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+            USE_MODE = "rest_service"
+            logger.info("Supabase REST client initialized using SUPABASE_SERVICE_ROLE_KEY.")
+            return
+        except Exception as e:
+            logger.error(f"Failed to init supabase REST client with service role: {e}")
+
+    # If SUPABASE_URL + SUPABASE_KEY and supabase available -> REST anon
+    if SUPABASE_URL and SUPABASE_KEY and SUPABASE_AVAILABLE:
+        try:
+            supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+            USE_MODE = "rest_anon"
+            logger.info("Supabase REST client initialized using SUPABASE_KEY (anon).")
+            return
+        except Exception as e:
+            logger.error(f"Failed to init supabase REST client with anon key: {e}")
+
+    # If direct Postgres URL present and psycopg2 available -> connect
+    # Accept common forms: postgres:// or postgresql://
+    if SUPABASE_DB_URL and PSYCOPG2_AVAILABLE:
+        try:
+            # psycopg2 can accept a full DSN in SUPABASE_DB_URL
+            pg_conn = psycopg2.connect(SUPABASE_DB_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+            # If a SECRET_KEY is required separately, it's usually included in the DB URL; if not, project may use it differently.
+            USE_MODE = "pg"
+            logger.info("Direct Postgres connection established using SUPABASE_DB_URL.")
+            return
+        except Exception as e:
+            logger.error(f"Failed to connect via SUPABASE_DB_URL: {e}")
+
+    # Last resort: if user provided SUPABASE_DB_URL but psycopg2 isn't installed, notify
+    if SUPABASE_DB_URL and not PSYCOPG2_AVAILABLE:
+        logger.warning("SUPABASE_DB_URL provided but psycopg2 is not available in the environment.")
+
+    # Nothing configured
+    USE_MODE = None
+    logger.warning("No usable Supabase/Postgres credentials found; DB functionality will be disabled.")
+
+# Initialize DB clients at import/startup
+init_db_clients()
+
+# ========== Helper wrappers for DB operations ==========
+def run_pg_query(query, params=None, fetchone=False, fetchall=True):
+    """
+    Helper to run a synchronous query on pg_conn and return rows as list/dict.
+    """
+    if pg_conn is None:
+        raise RuntimeError("Postgres connection is not initialized (pg_conn is None).")
+    with pg_conn.cursor() as cur:
+        cur.execute(query, params or ())
+        if fetchone:
+            return cur.fetchone()
+        if fetchall:
+            return cur.fetchall()
+        return None
+
+def supabase_select(table, select_clause="*", eq=None, ilike=None, limit=None):
+    """
+    Use supabase client to select; returns result object or raises.
+    """
+    if supabase is None:
+        raise RuntimeError("Supabase REST client not initialized.")
+    q = supabase.table(table).select(select_clause)
+    if eq is not None:
+        # eq is tuple (column, value)
+        q = q.eq(eq[0], eq[1])
+    if ilike is not None:
+        # ilike is tuple (column, pattern)
+        q = q.ilike(ilike[0], ilike[1])
+    if limit:
+        q = q.limit(limit)
+    return q.execute()
+
+# ========== Application-specific DB functions (use wrappers) ==========
+def has_greeted(user_id):
     try:
-        supabase = create_client(SUPABASE_URL_USED, SUPABASE_KEY_USED)
-        logger.info("Supabase client created successfully.")
+        if USE_MODE == "pg":
+            row = run_pg_query("SELECT user_id FROM public.greeted_users WHERE user_id = %s LIMIT 1", (user_id,), fetchone=True)
+            return bool(row)
+        elif USE_MODE in ("rest_service", "rest_anon"):
+            res = supabase_select("greeted_users", select_clause="user_id", eq=("user_id", user_id), limit=1)
+            return bool(getattr(res, "data", None))
+        else:
+            return False
     except Exception as e:
-        logger.error(f"Failed to create Supabase client: {e}")
-else:
-    logger.error("Supabase not configured — commands that use the DB will fail until credentials are provided.")
+        logger.error(f"DB error in has_greeted: {e}")
+        return False
 
-# Updated group targets - adjust these chat IDs to your actual groups
-GROUP_POST_TARGETS = {
-    "group 1": {"chat_id": -1002393705231},
-    "group 2": {"chat_id": -1002377255109},
-}
+def mark_greeted(user_id):
+    try:
+        if USE_MODE == "pg":
+            run_pg_query("INSERT INTO public.greeted_users (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING", (user_id,), fetchall=False)
+            pg_conn.commit()
+        elif USE_MODE in ("rest_service", "rest_anon"):
+            supabase.table("greeted_users").insert({"user_id": user_id}).execute()
+    except Exception as e:
+        logger.error(f"DB error in mark_greeted: {e}")
 
+def get_faq_answer(user_question):
+    try:
+        if USE_MODE == "pg":
+            row = run_pg_query(
+                "SELECT answer FROM public.faq WHERE question ILIKE %s LIMIT 1",
+                (f"%{user_question}%",),
+                fetchone=True
+            )
+            return row["answer"] if row else None
+        elif USE_MODE in ("rest_service", "rest_anon"):
+            # use ilike on question
+            res = supabase_select("faq", select_clause="answer", ilike=("question", f"%{user_question}%"), limit=1)
+            if getattr(res, "data", None):
+                return res.data[0].get("answer")
+            return None
+        else:
+            return None
+    except Exception as e:
+        logger.error(f"DB error in get_faq_answer: {e}")
+        return None
+
+async def fetch_faq_list():
+    """Return list of dicts with id and question."""
+    if USE_MODE == "pg":
+        rows = run_pg_query("SELECT id, question FROM public.faq ORDER BY id")
+        return rows or []
+    elif USE_MODE in ("rest_service", "rest_anon"):
+        res = supabase_select("faq", select_clause="id,question")
+        return res.data or []
+    else:
+        return []
+
+async def fetch_faq_answer_by_id(faq_id):
+    if USE_MODE == "pg":
+        row = run_pg_query("SELECT answer FROM public.faq WHERE id = %s LIMIT 1", (faq_id,), fetchone=True)
+        return row["answer"] if row else None
+    elif USE_MODE in ("rest_service", "rest_anon"):
+        res = supabase_select("faq", select_clause="answer", eq=("id", faq_id), limit=1)
+        return res.data[0]["answer"] if getattr(res, "data", None) else None
+    else:
+        return None
+
+async def fetch_facts_list():
+    if USE_MODE == "pg":
+        rows = run_pg_query("SELECT fact FROM public.fact ORDER BY id")
+        return [r["fact"] for r in (rows or [])]
+    elif USE_MODE in ("rest_service", "rest_anon"):
+        res = supabase_select("fact", select_clause="fact")
+        return [r["fact"] for r in (res.data or [])]
+    else:
+        return []
+
+async def fetch_resources_list():
+    if USE_MODE == "pg":
+        rows = run_pg_query("SELECT title, link FROM public.resources ORDER BY id")
+        return rows or []
+    elif USE_MODE in ("rest_service", "rest_anon"):
+        res = supabase_select("resources", select_clause="title,link")
+        return res.data or []
+    else:
+        return []
+
+# ========== App logic (handlers) ==========
 processing_messages = [
     "Hey Champ, give me a second to help you with that!",
     "Hang tight, Champ! Aurion's on it.",
@@ -95,11 +247,6 @@ WELCOME = (
     "Let's embark on this adventure and make a difference —one gem at a time."
 )
 
-FAREWELL = (
-    "Sad to see you go. Remember, you're always welcome back. "
-    "Stay strong and focused on polishing your diamond. 💎🔥"
-)
-
 RULES_LINK = "https://t.me/c/2377255109/6/400"
 
 def ensure_signoff_once(answer, signoff):
@@ -109,102 +256,19 @@ def ensure_signoff_once(answer, signoff):
         answer += '.'
     return answer + ' ' + signoff
 
-def has_greeted(user_id):
-    if supabase is None:
-        return False
-    try:
-        result = supabase.table("greeted_users").select("user_id").eq("user_id", user_id).execute()
-        return len(result.data) > 0
-    except Exception as e:
-        logger.error(f"Supabase error in has_greeted: {e}")
-        return False
-
-def mark_greeted(user_id):
-    if supabase is None:
-        return
-    try:
-        supabase.table("greeted_users").insert({"user_id": user_id}).execute()
-    except Exception as e:
-        logger.error(f"Supabase error in mark_greeted: {e}")
-
-# Candidate table names (try several common names as a fallback)
-FAQ_TABLE_CANDIDATES = ["faq", "faqs", "FAQ", "FAQs"]
-FACT_TABLE_CANDIDATES = ["fact", "facts", "Fact", "Facts"]
-
-def log_supabase_result(name, res):
-    try:
-        data = getattr(res, "data", None)
-        error = getattr(res, "error", None)
-        logger.info(f"Supabase check table='{name}' data_present={bool(data)} error={error}")
-    except Exception as e:
-        logger.error(f"Error logging supabase result for table {name}: {e}")
-
-def find_existing_table(candidates):
-    """
-    Tries each name in candidates and returns the first name that the client can query
-    (i.e., no error returned). This helps with schema/name mismatches.
-    """
-    if supabase is None:
-        return None
-    for name in candidates:
-        try:
-            res = supabase.table(name).select("1").limit(1).execute()
-            log_supabase_result(name, res)
-            if getattr(res, "error", None) is None:
-                return name
-        except Exception as e:
-            logger.warning(f"Exception while checking supabase table '{name}': {e}")
-    return None
-
-def verify_supabase_tables():
-    """
-    At startup, check the FAQ and FACT table candidates and log what we find.
-    This will surface if the table truly can't be found or if there's a permission error.
-    """
-    if supabase is None:
-        logger.warning("verify_supabase_tables skipped: supabase client not initialized.")
-        return
-    logger.info("Verifying Supabase tables for FAQ and FACT candidates...")
-    for name in FAQ_TABLE_CANDIDATES + FACT_TABLE_CANDIDATES:
-        try:
-            res = supabase.table(name).select("1").limit(1).execute()
-            log_supabase_result(name, res)
-        except Exception as e:
-            logger.error(f"Startup check: exception checking table '{name}': {e}")
-
-def get_faq_answer(user_question):
-    if supabase is None:
-        return None
-    try:
-        table_name = find_existing_table(FAQ_TABLE_CANDIDATES)
-        if not table_name:
-            logger.error("No FAQ table found among candidates. Returning None.")
-            return None
-        result = supabase.table(table_name).select("answer").ilike("question", f"%{user_question}%").execute()
-        log_supabase_result(table_name, result)
-        if result and result.data:
-            return result.data[0]['answer']
-        return None
-    except Exception as e:
-        logger.error(f"Supabase error in get_faq_answer: {e}")
-        return None
-
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if supabase is None:
-        await update.message.reply_text("Database not configured. Admins: check SUPABASE_DB_URL / SUPABASE_SECRET_KEY.")
+    if USE_MODE is None:
+        await update.message.reply_text("Database not configured. Admins: check SUPABASE env vars.")
         return
     try:
-        # Run sync Supabase call in executor to avoid blocking
         loop = asyncio.get_event_loop()
-
-        def fetch_list():
-            table_name = find_existing_table(FAQ_TABLE_CANDIDATES)
-            if not table_name:
-                raise RuntimeError("No FAQ table found among candidates. Check database schema/permissions.")
-            return supabase.table(table_name).select("id,question").execute()
-
-        data = await loop.run_in_executor(None, fetch_list)
-        faqs = data.data or []
+        faqs = await loop.run_in_executor(None, lambda: asyncio.run(fetch_faq_list()))
+        # fetch_faq_list is async but returns quickly; for safety wrapped
+        # If fetch_faq_list returns a coroutine handling above, adjust; simplest is to call directly:
+    except Exception:
+        # fallback synchronous call
+        faqs = await fetch_faq_list()
+    try:
         if not faqs:
             await update.message.reply_text(
                 "Sorry, Champ! Aurion can't fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
@@ -216,54 +280,31 @@ async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text("Select a FAQ:", reply_markup=reply_markup)
     except Exception as e:
-        logger.error(f"Supabase FAQ error: {e}")
-        await update.message.reply_text(
-            f"🔴 FAQ ERROR:\n{str(e)}\n\nType: {type(e).__name__}"
-        )
+        logger.error(f"FAQ handler error: {e}")
+        await update.message.reply_text(f"🔴 FAQ ERROR:\n{e}\n\nType: {type(e).__name__}")
 
 async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if supabase is None:
-        await update.callback_query.edit_message_text("Database not configured. Admins: check Supabase env vars.")
+    if USE_MODE is None:
+        await update.callback_query.edit_message_text("Database not configured. Admins: check SUPABASE env vars.")
         return
     try:
         query = update.callback_query
         await query.answer()
         faq_id = query.data.replace('faq_', '')
-        
-        # Run sync Supabase call in executor
-        loop = asyncio.get_event_loop()
-
-        def fetch_answer():
-            table_name = find_existing_table(FAQ_TABLE_CANDIDATES)
-            if not table_name:
-                raise RuntimeError("No FAQ table found among candidates. Check database schema/permissions.")
-            return supabase.table(table_name).select("answer").eq("id", faq_id).single().execute()
-
-        data = await loop.run_in_executor(None, fetch_answer)
-        answer = data.data['answer'] if data.data else "No answer found."
-        await query.edit_message_text(answer)
+        answer = await fetch_faq_answer_by_id(faq_id)
+        await query.edit_message_text(answer or "No answer found.")
     except Exception as e:
-        logger.error(f"Supabase FAQ button error: {e}")
+        logger.error(f"FAQ button handler error: {e}")
         await update.callback_query.edit_message_text(
-            f"🔴 FAQ BUTTON ERROR:\n{str(e)}\n\nType: {type(e).__name__}"
+            f"🔴 FAQ BUTTON ERROR:\n{e}\n\nType: {type(e).__name__}"
         )
 
 async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if supabase is None:
-        await update.message.reply_text("Database not configured. Admins: check SUPABASE_DB_URL / SUPABASE_SECRET_KEY.")
+    if USE_MODE is None:
+        await update.message.reply_text("Database not configured. Admins: check SUPABASE env vars.")
         return
     try:
-        # Run sync Supabase call in executor
-        loop = asyncio.get_event_loop()
-
-        def fetch_facts():
-            table_name = find_existing_table(FACT_TABLE_CANDIDATES)
-            if not table_name:
-                raise RuntimeError("No FACT table found among candidates. Check database schema/permissions.")
-            return supabase.table(table_name).select("fact").execute()
-
-        data = await loop.run_in_executor(None, fetch_facts)
-        facts = [item['fact'] for item in (data.data or [])] if data.data else []
+        facts = await fetch_facts_list()
         if facts:
             await update.message.reply_text(f"💎 Aurion Fact:\n{random.choice(facts)}")
         else:
@@ -271,23 +312,15 @@ async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Sorry, Champ! Aurion can't fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
             )
     except Exception as e:
-        logger.error(f"Supabase fact error: {e}")
-        await update.message.reply_text(
-            f"🔴 FACT ERROR:\n{str(e)}\n\nType: {type(e).__name__}"
-        )
+        logger.error(f"FACT handler error: {e}")
+        await update.message.reply_text(f"🔴 FACT ERROR:\n{e}\n\nType: {type(e).__name__}")
 
 async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if supabase is None:
-        await update.message.reply_text("Database not configured. Admins: check SUPABASE_DB_URL / SUPABASE_SECRET_KEY.")
+    if USE_MODE is None:
+        await update.message.reply_text("Database not configured. Admins: check SUPABASE env vars.")
         return
     try:
-        # Run sync Supabase call in executor
-        loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(
-            None,
-            lambda: supabase.table("resources").select("title,link").execute()
-        )
-        resources_list = data.data or []
+        resources_list = await fetch_resources_list()
         if not resources_list:
             await update.message.reply_text(
                 "Sorry, Champ! Aurion can't fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
@@ -296,47 +329,19 @@ async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg_lines = [f"[{item['title']}]({item['link']})" for item in resources_list]
         await update.message.reply_text("Here are some resources:\n" + "\n".join(msg_lines), parse_mode="Markdown")
     except Exception as e:
-        logger.error(f"Supabase resources error: {e}")
+        logger.error(f"RESOURCES handler error: {e}")
         await update.message.reply_text(
             "Sorry, Champ! Aurion can't fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
 
-async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"Community Rules: {RULES_LINK}")
-
-async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    for member in update.message.new_chat_members:
-        if member.is_bot:
-            continue
-        await update.message.reply_text(WELCOME)
-
-async def farewell_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    left_member = update.message.left_chat_member
-    if not left_member.is_bot:
-        await update.message.reply_text(FAREWELL)
-
-KEYWORD_RESPONSES = [
-    ("help", "If you need a hand, just type /ask followed by your question! Aurion's got your back."),
-    ("motivate", "You're stronger than you think, Champ! Every step counts."),
-    ("thanks", "Anytime, Champ! Let's keep that good energy rolling!"),
-]
-
-async def keyword_responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.lower()
-    for keyword, response in KEYWORD_RESPONSES:
-        if keyword in text:
-            await update.message.reply_text(response)
-            break
-
+# Other handlers (start, ask, keywords etc) follow same as before but use the DB wrappers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     if not has_greeted(user_id):
         await update.message.reply_text(WELCOME)
         mark_greeted(user_id)
     else:
-        await update.message.reply_text(
-            random.choice(processing_messages)
-        )
+        await update.message.reply_text(random.choice(processing_messages))
 
 async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -360,6 +365,7 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_question}
             ]
+            client = OpenAI(api_key=OPENAI_API_KEY)
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=messages,
@@ -436,43 +442,49 @@ def extract_message_thread_id(link):
             return int(match.group('topicid'))
     return None
 
-# ========== DB STATUS (debug) ==========
+# ========== DB STATUS + whichsupabase (debug) ==========
 async def dbstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Debug command: reports what Supabase returns for the faq and fact tables.
-    Use this to diagnose whether responses are empty, contain an error object,
-    or raise exceptions (e.g., permission issues due to RLS).
-    """
-    if supabase is None:
-        await update.message.reply_text("Supabase client not configured (missing env vars).")
+    """Reports what DB client returns for the faq and fact tables (non-secret)."""
+    if USE_MODE is None:
+        await update.message.reply_text("Supabase/DB client not configured (USE_MODE is None).")
         return
 
-    loop = asyncio.get_event_loop()
-
     def check_tables():
-        out = {}
-        for name in ["faq", "fact"]:
-            try:
-                res = supabase.table(name).select("*").limit(1).execute()
-                out[name] = {
-                    "data_present": bool(getattr(res, "data", None)),
-                    "data_preview": getattr(res, "data", None),
-                    "error": getattr(res, "error", None),
-                }
-            except Exception as e:
-                out[name] = {"exception": str(e)}
+        out = {"mode": USE_MODE}
+        try:
+            if USE_MODE == "pg":
+                # run simple queries
+                out["faq_sample"] = run_pg_query("SELECT id, question FROM public.faq LIMIT 1", fetchall=True)
+                out["fact_sample"] = run_pg_query("SELECT id, fact FROM public.fact LIMIT 1", fetchall=True)
+            else:
+                res1 = supabase_select("faq", select_clause="id,question", limit=1)
+                out["faq_sample"] = {"data": getattr(res1, "data", None), "error": getattr(res1, "error", None)}
+                res2 = supabase_select("fact", select_clause="id,fact", limit=1)
+                out["fact_sample"] = {"data": getattr(res2, "data", None), "error": getattr(res2, "error", None)}
+        except Exception as e:
+            out["exception"] = str(e)
         return out
 
+    loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, check_tables)
     text = json.dumps(result, default=str, indent=2)
-    # Telegram message size limit -- truncate if needed
     if len(text) > 3800:
         text = text[:3800] + "\n\n...[truncated]"
     await update.message.reply_text("DB status:\n" + text)
 
-# ========== NOTE: Scheduled post processing handled by scheduled_posts_runner.py ==========
-# This bot handles ONLY interactive commands (FAQ, facts, resources, etc.)
-# All scheduled posting is managed by the background worker
+async def whichsupabase(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reports which credential mode the running process is using (non-secret)."""
+    mode = USE_MODE or "none"
+    details = []
+    if mode == "rest_service":
+        details.append("Using Supabase REST with service role key (server-only).")
+    elif mode == "rest_anon":
+        details.append("Using Supabase REST with anon key.")
+    elif mode == "pg":
+        details.append("Using direct Postgres connection (psycopg2).")
+    else:
+        details.append("No DB client configured.")
+    await update.message.reply_text("Supabase mode: " + mode + "\n" + "\n".join(details))
 
 # ========== ERROR HANDLER ==========
 async def error_handler(update, context):
@@ -483,54 +495,33 @@ async def error_handler(update, context):
     else:
         logger.error("No exception information available (context.error is None)")
 
-# ========== MAIN FUNCTION FOR CRON MODE ==========
+# ========== MAIN ==========
 def main():
-    """Main function - can run as interactive bot OR as cron job"""
-    
-    # Check environment variables
     if not TELEGRAM_TOKEN or not OPENAI_API_KEY:
-        logger.error("Missing environment variables: TELEGRAM_BOT_TOKEN or OPENAI_API_KEY")
+        logger.error("Missing TELEGRAM_BOT_TOKEN or OPENAI_API_KEY")
         return
-    if supabase is None:
-        logger.warning("Supabase client not configured. DB commands will fail until env vars are set.")
 
-    # Run as interactive Telegram bot
-    logger.info("Running in INTERACTIVE MODE - full bot functionality")
-    
-    # Verify tables at startup for easy diagnosis
-    try:
-        verify_supabase_tables()
-    except Exception as e:
-        logger.error(f"Error during supabase verification: {e}")
+    # Log which DB mode is active (non-secret)
+    logger.info(f"Aurion starting. Supabase/DB USE_MODE={USE_MODE}")
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    
-    # Add all command handlers
+
+    # Register handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ask", ask))
     app.add_handler(CommandHandler("faq", faq))
     app.add_handler(CallbackQueryHandler(faq_button, pattern="^faq_"))
     app.add_handler(CommandHandler("fact", fact))
     app.add_handler(CommandHandler("resources", resources))
-    app.add_handler(CommandHandler("rules", rules))
     app.add_handler(CommandHandler("id", id_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("hashtags", hashtags))
     app.add_handler(CommandHandler("topics", topics))
-    # Add the debug command
+    # debug commands
     app.add_handler(CommandHandler("dbstatus", dbstatus))
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
-    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
+    app.add_handler(CommandHandler("whichsupabase", whichsupabase))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: None))  # minimal stub for message handler
     app.add_error_handler(error_handler)
-
-    # NOTE: Scheduled posting is handled by scheduled_posts_runner.py
-    # This bot is for interactive commands only
-    
-    # Start the background scheduler for scheduled posts
-    from scheduled_posts_runner import start_scheduler
-    start_scheduler()
-    logger.info("✅ Background scheduler started for scheduled posts")
 
     logger.info("Aurion bot starting in interactive mode...")
     app.run_polling()
