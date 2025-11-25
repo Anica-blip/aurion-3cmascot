@@ -17,6 +17,14 @@ from telegram.ext import (
 from openai import OpenAI
 import traceback
 
+# Import scheduled_posts_runner to run both bot and scheduler in same process
+try:
+    import scheduled_posts_runner
+    SCHEDULER_AVAILABLE = True
+except ImportError as e:
+    SCHEDULER_AVAILABLE = False
+    scheduled_posts_runner = None
+
 # Optional imports for DB clients — try to import but handle missing libs gracefully.
 SUPABASE_AVAILABLE = False
 PSYCOPG2_AVAILABLE = False
@@ -399,8 +407,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 TOPICS_LIST = [
     ("Aurion Gems", "https://t.me/c/2377255109/138"),
     ("ClubHouse Chatroom", "https://t.me/c/2377255109/10"),
-    ("ClubHouse News & Releases", "https://t.me/c/2377255109/9"),
-    ("ClubHouse Notices", "https://t.me/c/2377255109/1"),
+    ("ClubHouse News & Releases", "https://t.me/c/2377255109/6"),
+    ("ClubHouse Notices", "https://t.me/c/2377255109/674"),
     ("Weekly Challenges", "https://t.me/c/2377255109/39"),
     ("ClubHouse Mini-Challenges", "https://t.me/c/2377255109/25"),
     ("ClubHouse Learning", "https://t.me/c/2377255109/12"),
@@ -502,9 +510,17 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u,c: None))
     app.add_error_handler(error_handler)
 
+    # Start scheduled_posts_runner in background thread (if available)
+    if SCHEDULER_AVAILABLE and scheduled_posts_runner:
+        logger.info("🚀 Starting scheduled_posts_runner in background thread...")
+        scheduled_posts_runner.start_scheduler()
+    else:
+        logger.warning("⚠️ scheduled_posts_runner not available - scheduled posts will not run")
+
     logger.info("Aurion bot starting in interactive mode...")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+    
     
