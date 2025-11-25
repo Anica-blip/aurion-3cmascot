@@ -42,16 +42,18 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Two supported Supabase auth modes (simple):
-# 1) Direct Postgres: SUPABASE_DB_URL (postgres://...) and optionally SUPABASE_SECRET_KEY embedded in the URL
-# 2) Anonymous REST: SUPABASE_URL (https://<project>.supabase.co) + SUPABASE_ANON_KEY
+# Three supported Supabase auth modes:
+# 1) Direct Postgres: SUPABASE_DB_URL (postgres://...)
+# 2) Service Role REST: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (bypasses RLS)
+# 3) Anonymous REST: SUPABASE_URL + SUPABASE_ANON_KEY (has RLS restrictions)
 SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "")
-SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "")  # not required if DB_URL contains creds
+SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 
 # Runtime vars
-USE_MODE = None  # "pg", "rest_anon", or None
+USE_MODE = None  # "pg", "rest_service", "rest_anon", or None
 pg_conn = None
 supabase = None
 
@@ -67,6 +69,7 @@ def init_db_clients():
     print("=" * 60)
     print(f"SUPABASE_DB_URL: {'SET' if SUPABASE_DB_URL else 'NOT SET'}")
     print(f"SUPABASE_URL: {'SET' if SUPABASE_URL else 'NOT SET'}")
+    print(f"SUPABASE_SERVICE_ROLE_KEY: {'SET' if SUPABASE_SERVICE_ROLE_KEY else 'NOT SET'}")
     print(f"SUPABASE_ANON_KEY: {'SET' if SUPABASE_ANON_KEY else 'NOT SET'}")
     print(f"PSYCOPG2_AVAILABLE: {PSYCOPG2_AVAILABLE}")
     print(f"SUPABASE_AVAILABLE: {SUPABASE_AVAILABLE}")
@@ -86,21 +89,34 @@ def init_db_clients():
             logger.error(f"Failed to connect with SUPABASE_DB_URL: {e}")
             print(f"❌ FAILED: Direct Postgres - {e}")
 
+    # Try service role REST API first (bypasses RLS)
+    if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and SUPABASE_AVAILABLE:
+        print("Attempting Supabase REST API with SERVICE_ROLE_KEY...")
+        try:
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+            USE_MODE = "rest_service"
+            logger.info("DB mode: Supabase REST service role (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY).")
+            print("✅ SUCCESS: Connected via Supabase REST API (SERVICE ROLE)")
+            return
+        except Exception as e:
+            logger.error(f"Failed to init supabase REST service role client: {e}")
+            print(f"❌ FAILED: Supabase REST API (SERVICE ROLE) - {e}")
+
     # Fallback to anon REST if available
     if SUPABASE_URL and SUPABASE_ANON_KEY and SUPABASE_AVAILABLE:
-        print("Attempting Supabase REST API connection...")
+        print("Attempting Supabase REST API with ANON_KEY...")
         try:
             supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
             USE_MODE = "rest_anon"
             logger.info("DB mode: Supabase REST anon (SUPABASE_URL + SUPABASE_ANON_KEY).")
-            print("✅ SUCCESS: Connected via Supabase REST API")
+            print("✅ SUCCESS: Connected via Supabase REST API (ANON)")
             return
         except Exception as e:
             logger.error(f"Failed to init supabase REST anon client: {e}")
-            print(f"❌ FAILED: Supabase REST API - {e}")
+            print(f"❌ FAILED: Supabase REST API (ANON) - {e}")
 
     USE_MODE = None
-    logger.warning("No DB client configured: set SUPABASE_DB_URL or SUPABASE_URL + SUPABASE_ANON_KEY.")
+    logger.warning("No DB client configured: set SUPABASE_DB_URL or SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY.")
     print("❌ RESULT: No DB client configured")
     print("=" * 60)
 
@@ -137,7 +153,7 @@ def has_greeted_sync(user_id):
         if USE_MODE == "pg":
             row = run_pg_query("SELECT user_id FROM public.greeted_users WHERE user_id = %s LIMIT 1", (user_id,), fetchone=True)
             return bool(row)
-        elif USE_MODE == "rest_anon":
+        elif USE_MODE in ("rest_anon", "rest_service"):
             res = supabase_select("greeted_users", select_clause="user_id", eq=("user_id", user_id), limit=1)
             return bool(getattr(res, "data", None))
     except Exception as e:
@@ -149,7 +165,7 @@ def mark_greeted_sync(user_id):
         if USE_MODE == "pg":
             run_pg_query("INSERT INTO public.greeted_users (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING", (user_id,), fetchall=False)
             pg_conn.commit()
-        elif USE_MODE == "rest_anon":
+        elif USE_MODE in ("rest_anon", "rest_service"):
             supabase.table("greeted_users").insert({"user_id": user_id}).execute()
     except Exception as e:
         logger.error(f"mark_greeted_sync error: {e}")
@@ -164,7 +180,7 @@ def get_faq_answer_sync(user_question):
         if USE_MODE == "pg":
             row = run_pg_query("SELECT answer FROM public.faq WHERE question ILIKE %s LIMIT 1", (f"%{user_question}%",), fetchone=True)
             return row["answer"] if row else None
-        elif USE_MODE == "rest_anon":
+        elif USE_MODE in ("rest_anon", "rest_service"):
             res = supabase_select("faq", select_clause="answer", ilike=("question", f"%{user_question}%"), limit=1)
             if getattr(res, "data", None):
                 return res.data[0].get("answer")
@@ -177,7 +193,7 @@ def fetch_faq_list_sync():
         if USE_MODE == "pg":
             rows = run_pg_query("SELECT id, question FROM public.faq ORDER BY id")
             return rows or []
-        elif USE_MODE == "rest_anon":
+        elif USE_MODE in ("rest_anon", "rest_service"):
             res = supabase_select("faq", select_clause="id,question")
             return res.data or []
     except Exception as e:
@@ -189,7 +205,7 @@ def fetch_faq_answer_by_id_sync(faq_id):
         if USE_MODE == "pg":
             row = run_pg_query("SELECT answer FROM public.faq WHERE id = %s LIMIT 1", (faq_id,), fetchone=True)
             return row["answer"] if row else None
-        elif USE_MODE == "rest_anon":
+        elif USE_MODE in ("rest_anon", "rest_service"):
             res = supabase_select("faq", select_clause="answer", eq=("id", faq_id), limit=1)
             return res.data[0]["answer"] if getattr(res, "data", None) else None
     except Exception as e:
@@ -201,7 +217,7 @@ def fetch_facts_list_sync():
         if USE_MODE == "pg":
             rows = run_pg_query("SELECT fact FROM public.fact ORDER BY id")
             return [r["fact"] for r in (rows or [])]
-        elif USE_MODE == "rest_anon":
+        elif USE_MODE in ("rest_anon", "rest_service"):
             res = supabase_select("fact", select_clause="fact")
             return [r["fact"] for r in (res.data or [])]
     except Exception as e:
@@ -213,7 +229,7 @@ def fetch_resources_list_sync():
         if USE_MODE == "pg":
             rows = run_pg_query("SELECT title, link FROM public.resources ORDER BY id")
             return rows or []
-        elif USE_MODE == "rest_anon":
+        elif USE_MODE in ("rest_anon", "rest_service"):
             res = supabase_select("resources", select_clause="title,link")
             return res.data or []
     except Exception as e:
@@ -367,6 +383,9 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Check out our digital 3C /id card: https://anica-blip.github.io/3c-links/")
 
+async def rules_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📜 Community Rules: https://t.me/c/2377255109/6/400")
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "You can ask Aurion for tips, facts, or guidance. Try:\n"
@@ -394,6 +413,12 @@ async def topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
 HASHTAGS_LIST = [
     ("#Topics", "https://t.me/c/2431571054/58"),
     ("#Blog", "https://t.me/c/2431571054/58"),
+    ("#Provisions", "https://t.me/c/2431571054/58"),
+    ("#Training", "https://t.me/c/2431571054/58"),
+    ("#Knowledge", "https://t.me/c/2431571054/58"),
+    ("#Language", "https://t.me/c/2431571054/58"),
+    ("#Audiobook", "https://t.me/c/2431571054/58"),
+    ("#Healingmusic", "https://t.me/c/2431571054/58"),
 ]
 
 async def hashtags(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -437,6 +462,7 @@ async def whichsupabase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = USE_MODE or "none"
     desc = {
         "pg": "Direct Postgres (SUPABASE_DB_URL)",
+        "rest_service": "Supabase REST (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY)",
         "rest_anon": "Supabase REST (SUPABASE_URL + SUPABASE_ANON_KEY)",
         "none": "No DB client configured"
     }.get(mode, mode)
@@ -467,6 +493,7 @@ def main():
     app.add_handler(CommandHandler("fact", fact))
     app.add_handler(CommandHandler("resources", resources))
     app.add_handler(CommandHandler("id", id_command))
+    app.add_handler(CommandHandler("rules", rules_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("hashtags", hashtags))
     app.add_handler(CommandHandler("topics", topics))
