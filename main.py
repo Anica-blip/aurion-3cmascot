@@ -89,7 +89,7 @@ def mark_greeted(user_id):
 
 def get_faq_answer(user_question):
     try:
-        result = supabase.table("faq").select("answer").ilike("question", f"%{user_question}%").execute()
+        result = supabase.table("public.faq").select("answer").ilike("question", f"%{user_question}%").execute()
         if len(result.data) > 0:
             return result.data[0]['answer']
         return None
@@ -103,7 +103,7 @@ async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
         loop = asyncio.get_event_loop()
         data = await loop.run_in_executor(
             None, 
-            lambda: supabase.table("faq").select("id,question").execute()
+            lambda: supabase.table("public.faq").select("id,question").execute()
         )
         faqs = data.data or []
         if not faqs:
@@ -132,7 +132,7 @@ async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         loop = asyncio.get_event_loop()
         data = await loop.run_in_executor(
             None,
-            lambda: supabase.table("faq").select("answer").eq("id", faq_id).single().execute()
+            lambda: supabase.table("public.faq").select("answer").eq("id", faq_id).single().execute()
         )
         answer = data.data['answer'] if data.data else "No answer found."
         await query.edit_message_text(answer)
@@ -148,7 +148,7 @@ async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         loop = asyncio.get_event_loop()
         data = await loop.run_in_executor(
             None,
-            lambda: supabase.table("fact").select("fact").execute()
+            lambda: supabase.table("public.fact").select("fact").execute()
         )
         facts = [item['fact'] for item in data.data] if data.data else []
         if facts:
@@ -324,8 +324,6 @@ def extract_message_thread_id(link):
 # ========== NOTE: Scheduled post processing handled by scheduled_posts_runner.py ==========
 # This bot handles ONLY interactive commands (FAQ, facts, resources, etc.)
 # All scheduled posting is managed by the background worker
-
-
 
 # ========== ERROR HANDLER ==========
 async def error_handler(update, context):
