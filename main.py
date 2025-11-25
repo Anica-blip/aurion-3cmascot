@@ -298,154 +298,9 @@ def extract_message_thread_id(link):
             return int(match.group('topicid'))
     return None
 
-# ========== MAIN CHANGE: Using scheduled_posts table instead of message table ==========
-async def send_scheduled_posts(context: ContextTypes.DEFAULT_TYPE = None):
-    """Main function for cron job - sends posts scheduled for current time
-    Can be called as a job callback (with context) or standalone"""
-    now_utc = datetime.now(timezone.utc)
-    # Round to current minute for precise matching
-    current_minute = now_utc.replace(second=0, microsecond=0)
-    next_minute = current_minute.replace(minute=current_minute.minute + 1)
-    
-    current_time_str = current_minute.isoformat()
-    next_time_str = next_minute.isoformat()
-    
-    logger.info(f"[AUTO-SCHEDULER] Running at {now_utc.isoformat()}")
-    logger.info(f"[AUTO-SCHEDULER] Looking for posts scheduled between {current_time_str} and {next_time_str}")
-
-    try:
-        # Query scheduled_posts table for posts due now
-        result = supabase.table("scheduled_posts") \
-            .select("*") \
-            .gte("scheduled_time", current_time_str) \
-            .lt("scheduled_time", next_time_str) \
-            .eq("status", "scheduled") \
-            .execute()
-        
-        posts = result.data or []
-        logger.info(f"[AUTO-SCHEDULER] Found {len(posts)} posts scheduled for this time")
-        
-    except Exception as e:
-        logger.error(f"[AUTO-SCHEDULER] Supabase error: {e}")
-        return
-
-    if not posts:
-        logger.info("[AUTO-SCHEDULER] No scheduled posts found for current time")
-        return
-
-    # Use the application from context if available, otherwise create one
-    if context and context.application:
-        app = context.application
-    else:
-        app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    
-    for post in posts:
-        try:
-            await send_single_post(app, post)
-        except Exception as e:
-            logger.error(f"[AUTO-SCHEDULER] Failed to process post {post.get('id')}: {e}")
-
-async def send_single_post(app, post):
-    """Send a single scheduled post"""
-    post_id = post.get("id")
-    content = post.get("content")
-    target_group = post.get("target_group", "").lower()
-    target_thread = post.get("target_thread")
-    character_name = post.get("character_name", "Aurion")
-    
-    logger.info(f"[CRON JOB] Processing post {post_id}: target_group={target_group}, character={character_name}")
-    
-    if not content:
-        logger.error(f"[CRON JOB] Post {post_id} has no content, skipping")
-        return
-    
-    # Map target_group to chat_id
-    chat_id = None
-    if "group 1" in target_group or "1" in target_group:
-        chat_id = GROUP_POST_TARGETS["group 1"]["chat_id"]
-    elif "group 2" in target_group or "2" in target_group:
-        chat_id = GROUP_POST_TARGETS["group 2"]["chat_id"]
-    
-    if not chat_id:
-        logger.error(f"[CRON JOB] Post {post_id}: Unknown target_group '{target_group}', skipping")
-        return
-    
-    # Extract thread ID if specified
-    message_thread_id = None
-    if target_thread:
-        message_thread_id = extract_message_thread_id(target_thread)
-    
-    try:
-        # Send the message
-        if message_thread_id:
-            await app.bot.send_message(
-                chat_id=chat_id, 
-                text=content, 
-                message_thread_id=message_thread_id
-            )
-            logger.info(f"[CRON JOB] Sent post {post_id} to chat {chat_id}, thread {message_thread_id}")
-        else:
-            await app.bot.send_message(chat_id=chat_id, text=content)
-            logger.info(f"[CRON JOB] Sent post {post_id} to chat {chat_id}")
-        
-        # Mark as sent in database
-        supabase.table("scheduled_posts") \
-            .update({
-                "status": "sent", 
-                "sent_at": datetime.now(timezone.utc).isoformat()
-            }) \
-            .eq("id", post_id) \
-            .execute()
-            
-        logger.info(f"[CRON JOB] Successfully updated post {post_id} status to 'sent'")
-        
-    except Exception as e:
-        logger.error(f"[CRON JOB] Failed to send post {post_id}: {e}")
-        # Mark as failed
-        try:
-            supabase.table("scheduled_posts") \
-                .update({
-                    "status": "failed",
-                    "error_message": str(e)[:500]  # Limit error message length
-                }) \
-                .eq("id", post_id) \
-                .execute()
-        except Exception as update_error:
-            logger.error(f"[CRON JOB] Failed to update error status for post {post_id}: {update_error}")
-
-# ========== MANUAL TRIGGER for testing ==========
-async def sendnow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Manual command to send all pending scheduled posts"""
-    now_utc = datetime.now(timezone.utc)
-    
-    try:
-        # Get all posts that should have been sent by now
-        result = supabase.table("scheduled_posts") \
-            .select("*") \
-            .lte("scheduled_time", now_utc.isoformat()) \
-            .eq("status", "scheduled") \
-            .execute()
-        
-        posts = result.data or []
-        
-    except Exception as e:
-        logger.error(f"[SENDNOW] Supabase error: {e}")
-        await update.message.reply_text("Sorry Champ, error fetching scheduled posts.")
-        return
-
-    if not posts:
-        await update.message.reply_text("No pending posts found to send.")
-        return
-
-    sent_count = 0
-    for post in posts:
-        try:
-            await send_single_post(context.application, post)
-            sent_count += 1
-        except Exception as e:
-            logger.error(f"[SENDNOW] Failed to send post {post.get('id')}: {e}")
-
-    await update.message.reply_text(f"Sent {sent_count} out of {len(posts)} pending posts.")
+# ========== NOTE: Scheduled post processing handled by scheduled_posts_runner.py ==========
+# This bot handles ONLY interactive commands (FAQ, facts, resources, etc.)
+# All scheduled posting is managed by the background worker
 
 # ========== ERROR HANDLER ==========
 async def error_handler(update, context):
@@ -465,14 +320,7 @@ def main():
         logger.error("Missing environment variables: TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY")
         return
 
-    # Check if running as cron job (environment variable CRON_MODE=true)
-    if os.getenv("CRON_MODE", "").lower() == "true":
-        logger.info("Running in CRON MODE - sending scheduled posts only")
-        import asyncio
-        asyncio.run(send_scheduled_posts())
-        return
-
-    # Otherwise run as interactive Telegram bot
+    # Run as interactive Telegram bot
     logger.info("Running in INTERACTIVE MODE - full bot functionality")
     
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -492,30 +340,19 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
-    app.add_handler(CommandHandler("sendnow", sendnow_command))
     app.add_error_handler(error_handler)
 
-    # Add automatic scheduled post checker - runs at specific times daily
-    # Times: 9:00 AM, 12:00 PM, 3:00 PM, 6:00 PM, 9:00 PM UK time (UTC+1 currently)
-    # Note: Adjust hours by -1 to convert UK time to UTC
-    job_queue = app.job_queue
-    check_times = [
-        time(hour=8, minute=0, tzinfo=timezone.utc),   # 9 AM UK (8 AM UTC)
-        time(hour=11, minute=0, tzinfo=timezone.utc),  # 12 PM UK (11 AM UTC)
-        time(hour=14, minute=0, tzinfo=timezone.utc),  # 3 PM UK (2 PM UTC)
-        time(hour=17, minute=0, tzinfo=timezone.utc),  # 6 PM UK (5 PM UTC)
-        time(hour=20, minute=0, tzinfo=timezone.utc),  # 9 PM UK (8 PM UTC)
-    ]
-    for check_time in check_times:
-        job_queue.run_daily(send_scheduled_posts, check_time)
-    logger.info("✅ Automatic scheduler enabled - checking at 9AM, 12PM, 3PM, 6PM, 9PM UK time")
+    # NOTE: Scheduled posting is handled by scheduled_posts_runner.py
+    # This bot is for interactive commands only
+    
+    # Start the background scheduler for scheduled posts
+    from scheduled_posts_runner import start_scheduler
+    start_scheduler()
+    logger.info("✅ Background scheduler started for scheduled posts")
 
     logger.info("Aurion bot starting in interactive mode...")
     app.run_polling()
 
-# Start scheduled posts runner (independent background job)
-from scheduled_posts_runner import start_scheduler
-start_scheduler()
-
 if __name__ == "__main__":
     main()
+    
