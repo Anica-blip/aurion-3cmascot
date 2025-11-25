@@ -61,29 +61,48 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 def init_db_clients():
     global pg_conn, supabase, USE_MODE
 
+    # DEBUG: Print what we have available
+    print("=" * 60)
+    print("DATABASE CONNECTION DIAGNOSTIC")
+    print("=" * 60)
+    print(f"SUPABASE_DB_URL: {'SET' if SUPABASE_DB_URL else 'NOT SET'}")
+    print(f"SUPABASE_URL: {'SET' if SUPABASE_URL else 'NOT SET'}")
+    print(f"SUPABASE_ANON_KEY: {'SET' if SUPABASE_ANON_KEY else 'NOT SET'}")
+    print(f"PSYCOPG2_AVAILABLE: {PSYCOPG2_AVAILABLE}")
+    print(f"SUPABASE_AVAILABLE: {SUPABASE_AVAILABLE}")
+    print("=" * 60)
+
     # Prefer direct Postgres if DSN provided and psycopg2 available
     if SUPABASE_DB_URL and PSYCOPG2_AVAILABLE:
+        print("Attempting Direct Postgres connection...")
         try:
             pg_conn = psycopg2.connect(SUPABASE_DB_URL, cursor_factory=psycopg2.extras.RealDictCursor)
             pg_conn.autocommit = False
             USE_MODE = "pg"
             logger.info("DB mode: direct Postgres (SUPABASE_DB_URL).")
+            print("✅ SUCCESS: Connected via Direct Postgres")
             return
         except Exception as e:
             logger.error(f"Failed to connect with SUPABASE_DB_URL: {e}")
+            print(f"❌ FAILED: Direct Postgres - {e}")
 
     # Fallback to anon REST if available
     if SUPABASE_URL and SUPABASE_ANON_KEY and SUPABASE_AVAILABLE:
+        print("Attempting Supabase REST API connection...")
         try:
             supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
             USE_MODE = "rest_anon"
             logger.info("DB mode: Supabase REST anon (SUPABASE_URL + SUPABASE_ANON_KEY).")
+            print("✅ SUCCESS: Connected via Supabase REST API")
             return
         except Exception as e:
             logger.error(f"Failed to init supabase REST anon client: {e}")
+            print(f"❌ FAILED: Supabase REST API - {e}")
 
     USE_MODE = None
     logger.warning("No DB client configured: set SUPABASE_DB_URL or SUPABASE_URL + SUPABASE_ANON_KEY.")
+    print("❌ RESULT: No DB client configured")
+    print("=" * 60)
 
 # Run initialization once
 init_db_clients()
