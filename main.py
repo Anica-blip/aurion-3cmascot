@@ -399,7 +399,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 TOPICS_LIST = [
     ("Aurion Gems", "https://t.me/c/2377255109/138"),
     ("ClubHouse Chatroom", "https://t.me/c/2377255109/10"),
-    ("ClubHouse News & Releases", "https://t.me/c/2377255109/6"),
+    ("ClubHouse News & Releases", "https://t.me/c/2377255109/9"),
     ("ClubHouse Notices", "https://t.me/c/2377255109/1"),
     ("Weekly Challenges", "https://t.me/c/2377255109/39"),
     ("ClubHouse Mini-Challenges", "https://t.me/c/2377255109/25"),
