@@ -118,6 +118,8 @@ async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Select a FAQ:", reply_markup=reply_markup)
     except Exception as e:
         logger.error(f"Supabase FAQ error: {e}")
+        print(f"🔴 FAQ ERROR: {e}")  # Print to console
+        print(f"🔴 FAQ ERROR TYPE: {type(e)}")  # Print error type
         await update.message.reply_text(
             "Sorry, Champ! Aurion can't fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
@@ -159,6 +161,8 @@ async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     except Exception as e:
         logger.error(f"Supabase fact error: {e}")
+        print(f"🔴 FACT ERROR: {e}")  # Print to console
+        print(f"🔴 FACT ERROR TYPE: {type(e)}")  # Print error type
         await update.message.reply_text(
             "Sorry, Champ! Aurion can't fetch this right now due to technical issues. Try again later, or contact an admin if this continues."
         )
