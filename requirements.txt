@@ -3,6 +3,3 @@ openai
 python-telegram-bot[job-queue]
 requests
 psycopg2-binary
-
-requests
-
