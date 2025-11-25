@@ -3,6 +3,7 @@ import logging
 import random
 import re
 import asyncio
+import json
 from datetime import datetime, timezone, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -87,10 +88,55 @@ def mark_greeted(user_id):
     except Exception as e:
         logger.error(f"Supabase error in mark_greeted: {e}")
 
+# Candidate table names (try several common names as a fallback)
+FAQ_TABLE_CANDIDATES = ["faq", "faqs", "FAQ", "FAQs"]
+FACT_TABLE_CANDIDATES = ["fact", "facts", "Fact", "Facts"]
+
+def log_supabase_result(name, res):
+    try:
+        data = getattr(res, "data", None)
+        error = getattr(res, "error", None)
+        logger.info(f"Supabase check table='{name}' data_present={bool(data)} error={error}")
+    except Exception as e:
+        logger.error(f"Error logging supabase result for table {name}: {e}")
+
+def find_existing_table(candidates):
+    """
+    Tries each name in candidates and returns the first name that the client can query
+    (i.e., no error returned). This helps with schema/name mismatches.
+    """
+    for name in candidates:
+        try:
+            res = supabase.table(name).select("1").limit(1).execute()
+            log_supabase_result(name, res)
+            if getattr(res, "error", None) is None:
+                return name
+        except Exception as e:
+            logger.warning(f"Exception while checking supabase table '{name}': {e}")
+    return None
+
+def verify_supabase_tables():
+    """
+    At startup, check the FAQ and FACT table candidates and log what we find.
+    This will surface if the table truly can't be found or if there's a permission error.
+    """
+    logger.info("Verifying Supabase tables for FAQ and FACT candidates...")
+    for name in FAQ_TABLE_CANDIDATES + FACT_TABLE_CANDIDATES:
+        try:
+            res = supabase.table(name).select("1").limit(1).execute()
+            log_supabase_result(name, res)
+        except Exception as e:
+            logger.error(f"Startup check: exception checking table '{name}': {e}")
+
 def get_faq_answer(user_question):
     try:
-        result = supabase.table("faq").select("answer").ilike("question", f"%{user_question}%").execute()
-        if len(result.data) > 0:
+        table_name = find_existing_table(FAQ_TABLE_CANDIDATES)
+        if not table_name:
+            logger.error("No FAQ table found among candidates. Returning None.")
+            return None
+        result = supabase.table(table_name).select("answer").ilike("question", f"%{user_question}%").execute()
+        log_supabase_result(table_name, result)
+        if result and result.data:
             return result.data[0]['answer']
         return None
     except Exception as e:
@@ -101,10 +147,14 @@ async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # Run sync Supabase call in executor to avoid blocking
         loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(
-            None, 
-            lambda: supabase.table("faq").select("id,question").execute()
-        )
+
+        def fetch_list():
+            table_name = find_existing_table(FAQ_TABLE_CANDIDATES)
+            if not table_name:
+                raise RuntimeError("No FAQ table found among candidates. Check database schema/permissions.")
+            return supabase.table(table_name).select("id,question").execute()
+
+        data = await loop.run_in_executor(None, fetch_list)
         faqs = data.data or []
         if not faqs:
             await update.message.reply_text(
@@ -130,10 +180,14 @@ async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Run sync Supabase call in executor
         loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(
-            None,
-            lambda: supabase.table("faq").select("answer").eq("id", faq_id).single().execute()
-        )
+
+        def fetch_answer():
+            table_name = find_existing_table(FAQ_TABLE_CANDIDATES)
+            if not table_name:
+                raise RuntimeError("No FAQ table found among candidates. Check database schema/permissions.")
+            return supabase.table(table_name).select("answer").eq("id", faq_id).single().execute()
+
+        data = await loop.run_in_executor(None, fetch_answer)
         answer = data.data['answer'] if data.data else "No answer found."
         await query.edit_message_text(answer)
     except Exception as e:
@@ -146,11 +200,15 @@ async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # Run sync Supabase call in executor
         loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(
-            None,
-            lambda: supabase.table("fact").select("fact").execute()
-        )
-        facts = [item['fact'] for item in data.data] if data.data else []
+
+        def fetch_facts():
+            table_name = find_existing_table(FACT_TABLE_CANDIDATES)
+            if not table_name:
+                raise RuntimeError("No FACT table found among candidates. Check database schema/permissions.")
+            return supabase.table(table_name).select("fact").execute()
+
+        data = await loop.run_in_executor(None, fetch_facts)
+        facts = [item['fact'] for item in (data.data or [])] if data.data else []
         if facts:
             await update.message.reply_text(f"💎 Aurion Fact:\n{random.choice(facts)}")
         else:
@@ -320,6 +378,35 @@ def extract_message_thread_id(link):
             return int(match.group('topicid'))
     return None
 
+# ========== DB STATUS (debug) ==========
+async def dbstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Debug command: reports what Supabase returns for the faq and fact tables.
+    Use this to diagnose whether responses are empty, contain an error object,
+    or raise exceptions (e.g., permission issues due to RLS).
+    """
+    loop = asyncio.get_event_loop()
+
+    def check_tables():
+        out = {}
+        for name in ["faq", "fact"]:
+            try:
+                res = supabase.table(name).select("*").limit(1).execute()
+                out[name] = {
+                    "data_present": bool(getattr(res, "data", None)),
+                    "data_preview": getattr(res, "data", None),
+                    "error": getattr(res, "error", None),
+                }
+            except Exception as e:
+                out[name] = {"exception": str(e)}
+        return out
+
+    result = await loop.run_in_executor(None, check_tables)
+    text = json.dumps(result, default=str, indent=2)
+    # Telegram message size limit -- truncate if needed
+    if len(text) > 3800:
+        text = text[:3800] + "\n\n...[truncated]"
+    await update.message.reply_text("DB status:\n" + text)
 
 # ========== NOTE: Scheduled post processing handled by scheduled_posts_runner.py ==========
 # This bot handles ONLY interactive commands (FAQ, facts, resources, etc.)
@@ -346,6 +433,12 @@ def main():
     # Run as interactive Telegram bot
     logger.info("Running in INTERACTIVE MODE - full bot functionality")
     
+    # Verify tables at startup for easy diagnosis
+    try:
+        verify_supabase_tables()
+    except Exception as e:
+        logger.error(f"Error during supabase verification: {e}")
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
     # Add all command handlers
@@ -360,6 +453,8 @@ def main():
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("hashtags", hashtags))
     app.add_handler(CommandHandler("topics", topics))
+    # Add the new debug command
+    app.add_handler(CommandHandler("dbstatus", dbstatus))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, keyword_responder))
