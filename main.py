@@ -2,6 +2,7 @@ import os
 import logging
 import random
 import re
+import asyncio
 from datetime import datetime, timezone, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -98,7 +99,12 @@ def get_faq_answer(user_question):
 
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        data = supabase.table("faq").select("id,question").execute()
+        # Run sync Supabase call in executor to avoid blocking
+        loop = asyncio.get_event_loop()
+        data = await loop.run_in_executor(
+            None, 
+            lambda: supabase.table("faq").select("id,question").execute()
+        )
         faqs = data.data or []
         if not faqs:
             await update.message.reply_text(
@@ -121,7 +127,13 @@ async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
         faq_id = query.data.replace('faq_', '')
-        data = supabase.table("faq").select("answer").eq("id", faq_id).single().execute()
+        
+        # Run sync Supabase call in executor
+        loop = asyncio.get_event_loop()
+        data = await loop.run_in_executor(
+            None,
+            lambda: supabase.table("faq").select("answer").eq("id", faq_id).single().execute()
+        )
         answer = data.data['answer'] if data.data else "No answer found."
         await query.edit_message_text(answer)
     except Exception as e:
@@ -132,7 +144,12 @@ async def faq_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        data = supabase.table("fact").select("fact").execute()
+        # Run sync Supabase call in executor
+        loop = asyncio.get_event_loop()
+        data = await loop.run_in_executor(
+            None,
+            lambda: supabase.table("fact").select("fact").execute()
+        )
         facts = [item['fact'] for item in data.data] if data.data else []
         if facts:
             await update.message.reply_text(f"💎 Aurion Fact:\n{random.choice(facts)}")
@@ -148,7 +165,12 @@ async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        data = supabase.table("resources").select("title,link").execute()
+        # Run sync Supabase call in executor
+        loop = asyncio.get_event_loop()
+        data = await loop.run_in_executor(
+            None,
+            lambda: supabase.table("resources").select("title,link").execute()
+        )
         resources_list = data.data or []
         if not resources_list:
             await update.message.reply_text(
@@ -298,9 +320,12 @@ def extract_message_thread_id(link):
             return int(match.group('topicid'))
     return None
 
+
 # ========== NOTE: Scheduled post processing handled by scheduled_posts_runner.py ==========
 # This bot handles ONLY interactive commands (FAQ, facts, resources, etc.)
 # All scheduled posting is managed by the background worker
+
+
 
 # ========== ERROR HANDLER ==========
 async def error_handler(update, context):
