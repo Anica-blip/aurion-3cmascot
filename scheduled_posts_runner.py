@@ -1,5 +1,5 @@
 """ 
-Render Background Worker - Direct PostgreSQL Connection
+Render Background Worker - Supabase REST API Connection
 Service Type: Render Background/Aurion
 Bot Token: TELEGRAM_BOT_TOKEN (Aurion bot)
 TIMEZONE: WEST (UTC+1)
@@ -9,60 +9,95 @@ import time
 import json
 import threading
 from datetime import datetime, timezone, timedelta
-import psycopg2
-from psycopg2.extras import RealDictCursor
 import requests
 
-# ============================================
-# ENVIRONMENT VARIABLES
-# ============================================
-SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
-# SUPABASE_SERVICE_ROLE_KEY may be present (used by other components) but is optional for direct DB mode
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# Import Supabase client
+try:
+    from supabase import create_client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+    print("❌ ERROR: supabase-py library not installed")
+    exit(1)
 
-SERVICE_TYPE = "Render Background/Aurion"
+# ============================================
+# ENVIRONMENT VARIABLES - WITH TRIMMING
+# ============================================
+SUPABASE_DB_URL = (os.getenv("SUPABASE_DB_URL") or "").strip()
+SUPABASE_SERVICE_ROLE_KEY = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+TELEGRAM_BOT_TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+
+# ✅ RUNNER IDENTITY
+RUNNER_NAME = 'Render Background/Aurion'
+SERVICE_TYPE = 'Render Background/Aurion'
+
+# ✅ TIMEZONE CONFIGURATION - WEST = UTC+1
 WEST = timezone(timedelta(hours=1))
 EXECUTION_TIMES = ["08:55", "11:55", "14:00", "20:55"]
 last_execution = None
 
 # ============================================
-# VALIDATE ENVIRONMENT VARIABLES
+# VALIDATE CREDENTIALS
 # ============================================
 print("\n--- ENVIRONMENT VARIABLE CHECK ---")
 missing = []
 if not SUPABASE_DB_URL:
     missing.append("SUPABASE_DB_URL")
+if not SUPABASE_SERVICE_ROLE_KEY:
+    missing.append("SUPABASE_SERVICE_ROLE_KEY")
 if not TELEGRAM_BOT_TOKEN:
     missing.append("TELEGRAM_BOT_TOKEN")
 
 if missing:
-    print("❌ Missing environment variables:")
+    print("❌ Missing required environment variables:")
     for m in missing:
         print(f"  {m}: MISSING")
-    print("\nThis service requires SUPABASE_DB_URL (Postgres DSN) and TELEGRAM_BOT_TOKEN to run.")
     exit(1)
 
-# Warn but do NOT require SUPABASE_SERVICE_ROLE_KEY for direct DB operation
 print(f"  SUPABASE_DB_URL: {'SET' if SUPABASE_DB_URL else 'MISSING'}")
-print(f"  SUPABASE_SERVICE_ROLE_KEY: {'SET' if SUPABASE_SERVICE_ROLE_KEY else 'NOT SET (optional for direct DB)'}")
+print(f"  SUPABASE_SERVICE_ROLE_KEY: {'SET' if SUPABASE_SERVICE_ROLE_KEY else 'MISSING'}")
 print(f"  TELEGRAM_BOT_TOKEN: {'SET' if TELEGRAM_BOT_TOKEN else 'MISSING'}")
 print("✅ Required environment variables are set\n")
 
 # ============================================
-# DATABASE CONNECTION
+# EXTRACT SUPABASE URL FROM DB URL
 # ============================================
-def get_db_connection():
-    """Create a new PostgreSQL database connection"""
-    try:
-        conn = psycopg2.connect(SUPABASE_DB_URL, cursor_factory=RealDictCursor)
-        return conn
-    except Exception as e:
-        print(f"❌ Database connection failed: {str(e)}")
-        raise
+def extract_supabase_url(db_url):
+    """Extract Supabase project URL from database connection string"""
+    import re
+    
+    # Match pattern: db.PROJECT_ID.supabase.co
+    match = re.search(r'db\.([^.]+)\.supabase\.co', db_url)
+    if match:
+        project_id = match.group(1)
+        return f"https://{project_id}.supabase.co"
+    
+    # Match pooler pattern: postgres.PROJECT_ID
+    match = re.search(r'postgres\.([^:]+)', db_url)
+    if match:
+        project_id = match.group(1)
+        return f"https://{project_id}.supabase.co"
+    
+    raise ValueError(f"Cannot extract Supabase URL from: {db_url}")
+
+SUPABASE_URL = extract_supabase_url(SUPABASE_DB_URL)
+
+# ============================================
+# CREATE SUPABASE CLIENT
+# ============================================
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY,
+    options={
+        'headers': {
+            'apikey': SUPABASE_SERVICE_ROLE_KEY,
+            'Authorization': f'Bearer {SUPABASE_SERVICE_ROLE_KEY}'
+        }
+    }
+)
 
 print(f"[{datetime.now(WEST).isoformat()}] Render Background Worker initialized")
-print(f"Database: PostgreSQL Direct Connection (SUPABASE_DB_URL)")
+print(f"Supabase URL: {SUPABASE_URL}")
 print(f"Service Type: {SERVICE_TYPE}")
 print(f"Timezone: WEST (UTC+1)")
 print(f"Execution Times: {EXECUTION_TIMES}")
@@ -234,193 +269,75 @@ def send_telegram_animation(chat_id, animation_url, caption, thread_id=None):
     }
 
 
-def send_telegram_document(chat_id, document_url, caption, thread_id=None):
-    """Send document to Telegram"""
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
-    
-    payload = {
-        'chat_id': chat_id,
-        'document': document_url,
-        'caption': caption,
-        'parse_mode': 'HTML'
-    }
-    
-    if thread_id:
-        payload['message_thread_id'] = int(thread_id)
-    
-    response = requests.post(url, json=payload)
-    data = response.json()
-    
-    if not response.ok or not data.get('ok'):
-        return {
-            'success': False,
-            'error': data.get('description', f'HTTP {response.status_code}')
-        }
-    
-    return {
-        'success': True,
-        'message_id': data.get('result', {}).get('message_id')
-    }
-
-
-def detect_media_type(media_url, media_item=None):
-    """Detect media type from URL extension or media_item type field"""
-    # First check if media_item has explicit type field
-    if media_item and isinstance(media_item, dict):
-        media_type = media_item.get('type') or media_item.get('media_type') or media_item.get('mediaType')
-        if media_type:
-            media_type_lower = media_type.lower()
-            if 'video' in media_type_lower:
-                return 'video'
-            elif 'gif' in media_type_lower or 'animation' in media_type_lower:
-                return 'animation'
-            elif 'image' in media_type_lower or 'photo' in media_type_lower:
-                return 'photo'
-            elif 'document' in media_type_lower or 'file' in media_type_lower:
-                return 'document'
-    
-    # Fall back to URL extension detection
-    if not isinstance(media_url, str):
-        return 'photo'  # Default
-    
-    media_url_lower = media_url.lower()
-    
-    # Video extensions
-    if any(ext in media_url_lower for ext in ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv']):
-        return 'video'
-    
-    # Animation/GIF extensions
-    if '.gif' in media_url_lower:
-        return 'animation'
-    
-    # Document extensions
-    if any(ext in media_url_lower for ext in ['.pdf', '.doc', '.docx', '.txt', '.zip', '.rar', '.csv', '.xls', '.xlsx']):
-        return 'document'
-    
-    # Image extensions (default)
-    if any(ext in media_url_lower for ext in ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.svg']):
-        return 'photo'
-    
-    # Default to photo if no match
-    return 'photo'
-
-
-def parse_media_file(media_item):
-    """Parse media file from various JSON structures"""
-    if isinstance(media_item, str):
-        # Direct URL string
-        return media_item
-    
-    if isinstance(media_item, dict):
-        # Try various common key names
-        return (
-            media_item.get('url') or 
-            media_item.get('src') or 
-            media_item.get('supabaseUrl') or 
-            media_item.get('file_url') or
-            media_item.get('media_url') or
-            media_item.get('path') or
-            None
-        )
-    
-    return None
-
-
 def post_to_telegram(post):
-    """Post content to Telegram based on media type"""
+    """Send post to Telegram based on media type"""
     try:
-        chat_id = post['channel_group_id']
+        channel_group_id = post.get('channel_group_id')
         thread_id = post.get('thread_id')
+        
+        if not channel_group_id:
+            return {'success': False, 'error': 'Missing channel_group_id'}
+        
         caption = build_caption(post)
         
-        if len(caption) > 1024:
-            raise Exception(f"Caption too long ({len(caption)} chars). Please shorten content to under 1024 characters.")
+        # Check for media files
+        media_files = post.get('media_files') or (post.get('post_content', {}).get('media_files'))
         
-        # Parse media_files from various sources
-        media_files = []
+        if not media_files or len(media_files) == 0:
+            # Text-only post
+            result = send_telegram_message(channel_group_id, caption, thread_id)
+            if result['success']:
+                return {'success': True, 'post_id': result.get('message_id')}
+            return {'success': False, 'error': result.get('error')}
         
-        if post.get('media_files'):
-            if isinstance(post['media_files'], list):
-                media_files = post['media_files']
-            elif isinstance(post['media_files'], str):
-                # If media_files is a JSON string, try to parse it
-                try:
-                    media_files = json.loads(post['media_files'])
-                except:
-                    pass
+        # Get first media file
+        first_media = media_files[0]
+        media_url = first_media.get('url')
         
-        # Fallback to post_content.media_files
-        if not media_files:
-            post_content = post.get('post_content', {})
-            if post_content.get('media_files'):
-                if isinstance(post_content['media_files'], list):
-                    media_files = post_content['media_files']
-                elif isinstance(post_content['media_files'], str):
-                    try:
-                        media_files = json.loads(post_content['media_files'])
-                    except:
-                        pass
+        if not media_url:
+            return {'success': False, 'error': 'Media file has no URL'}
         
-        # If we have media, send with appropriate method
-        if media_files:
-            first_media = media_files[0]
-            media_url = parse_media_file(first_media)
-            
-            if not media_url:
-                raise Exception('Could not extract media URL from media_files')
-            
-            if not isinstance(media_url, str):
-                raise Exception('Invalid media URL format')
-            
-            # Detect media type
-            media_type = detect_media_type(media_url, first_media)
-            
-            print(f"📎 Detected media type: {media_type}")
-            print(f"🔗 Media URL: {media_url}")
-            
-            # Send based on media type
-            if media_type == 'video':
-                print(f"🎥 Uploading video to Telegram")
-                result = send_telegram_video(chat_id, media_url, caption, thread_id)
-            elif media_type == 'animation':
-                print(f"🎬 Uploading animation/GIF to Telegram")
-                result = send_telegram_animation(chat_id, media_url, caption, thread_id)
-            elif media_type == 'document':
-                print(f"📄 Uploading document to Telegram")
-                result = send_telegram_document(chat_id, media_url, caption, thread_id)
-            else:  # photo
-                print(f"🖼️ Uploading photo to Telegram")
-                result = send_telegram_photo(chat_id, media_url, caption, thread_id)
+        # Detect media type
+        media_type = (first_media.get('type') or '').lower()
+        file_name = (first_media.get('name') or media_url).lower()
+        
+        # Check if it's a GIF/animation
+        is_animation = (
+            media_type == 'animation' or
+            media_type == 'gif' or
+            file_name.endswith('.gif')
+        )
+        
+        # Check if it's a video
+        is_video = (
+            media_type == 'video' or
+            any(file_name.endswith(ext) for ext in ['.mp4', '.mov', '.avi', '.mkv', '.webm'])
+        )
+        
+        # Send appropriate media type
+        if is_animation:
+            result = send_telegram_animation(channel_group_id, media_url, caption, thread_id)
+        elif is_video:
+            result = send_telegram_video(channel_group_id, media_url, caption, thread_id)
         else:
-            print('💬 Sending text-only message')
-            result = send_telegram_message(chat_id, caption, thread_id)
+            # Default to photo
+            result = send_telegram_photo(channel_group_id, media_url, caption, thread_id)
         
-        if not result['success']:
-            raise Exception(f"Telegram API error: {result.get('error', 'Unknown error')}")
+        if result['success']:
+            return {'success': True, 'post_id': result.get('message_id')}
         
-        message_id = str(result.get('message_id', 'unknown'))
-        print(f"✅ Telegram upload successful! Message ID: {message_id}")
-        
-        return {
-            'success': True,
-            'post_id': message_id
-        }
+        return {'success': False, 'error': result.get('error')}
         
     except Exception as e:
-        print(f"❌ postToTelegram failed: {str(e)}")
-        return {
-            'success': False,
-            'error': str(e)
-        }
+        return {'success': False, 'error': str(e)}
+
 
 # ============================================
-# CORE PROCESSING FUNCTIONS (PostgreSQL)
+# JOB PROCESSING FUNCTIONS
 # ============================================
 
 def claim_jobs(limit=50):
-    """Query and claim jobs from scheduled_posts table"""
-    conn = None
-    cursor = None
+    """Query and claim jobs from scheduled_posts table using Supabase REST API"""
     try:
         now_utc = datetime.now(timezone.utc)
         now_west = now_utc.astimezone(WEST)
@@ -437,22 +354,18 @@ def claim_jobs(limit=50):
         print(f"Service Type: '{SERVICE_TYPE}'")
         print(f"{'='*60}\n")
         
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        # Query scheduled_posts using Supabase REST API
+        response = supabase.table('scheduled_posts')\
+            .select('*')\
+            .eq('service_type', SERVICE_TYPE)\
+            .eq('posting_status', 'scheduled')\
+            .eq('scheduled_date', current_date)\
+            .lte('scheduled_time', current_time)\
+            .order('scheduled_time')\
+            .limit(limit)\
+            .execute()
         
-        # Query scheduled_posts with PostgreSQL
-        query = """
-            SELECT * FROM scheduled_posts 
-            WHERE service_type = %s 
-            AND posting_status = 'scheduled'
-            AND scheduled_date = %s
-            AND scheduled_time <= %s
-            ORDER BY scheduled_time ASC
-            LIMIT %s
-        """
-        
-        cursor.execute(query, (SERVICE_TYPE, current_date, current_time, limit))
-        posts = cursor.fetchall()
+        posts = response.data or []
         
         if not posts:
             print("No pending jobs found")
@@ -460,41 +373,26 @@ def claim_jobs(limit=50):
         
         print(f"Found {len(posts)} pending job(s)")
         
-        # Claim jobs by updating status to 'processing'
+        # Claim jobs by updating status to 'pending'
         post_ids = [post['id'] for post in posts]
         
-        update_query = """
-            UPDATE scheduled_posts 
-            SET posting_status = 'processing'
-            WHERE id = ANY(%s) AND service_type = %s
-        """
-        
-        cursor.execute(update_query, (post_ids, SERVICE_TYPE))
-        conn.commit()
+        supabase.table('scheduled_posts')\
+            .update({'post_status': 'pending'})\
+            .in_('id', post_ids)\
+            .eq('service_type', SERVICE_TYPE)\
+            .execute()
         
         print(f"✅ Claimed {len(posts)} job(s) for processing")
         
-        # Convert RealDictRow to regular dict for easier handling
-        posts_to_process = [dict(post) for post in posts]
-        
-        return posts_to_process
+        return posts
         
     except Exception as e:
         print(f"Error in claim_jobs: {str(e)}")
-        if conn:
-            conn.rollback()
         raise
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
 
 
 def process_post(post):
     """Process a single post"""
-    conn = None
-    cursor = None
     now = datetime.now(timezone.utc)
     print(f"\n--- Processing Post {post['id']} ---")
     
@@ -512,18 +410,16 @@ def process_post(post):
         
         external_post_id = post_result.get('post_id', 'unknown')
         
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
         # Update scheduled_posts
-        update_query = """
-            UPDATE scheduled_posts
-            SET posting_status = 'sent', post_status = 'sent', updated_at = %s
-            WHERE id = %s AND service_type = %s
-        """
-        
-        cursor.execute(update_query, (now.isoformat(), post['id'], SERVICE_TYPE))
-        conn.commit()
+        supabase.table('scheduled_posts')\
+            .update({
+                'posting_status': 'sent',
+                'post_status': 'sent',
+                'updated_at': now.isoformat()
+            })\
+            .eq('id', post['id'])\
+            .eq('service_type', SERVICE_TYPE)\
+            .execute()
         
         # Insert into dashboard_posts
         post_content = post.get('post_content', {})
@@ -568,45 +464,21 @@ def process_post(post):
         }
         
         try:
-            insert_query = """
-                INSERT INTO dashboard_posts (
-                    scheduled_post_id, social_platform, post_content, external_post_id, posted_at, url,
-                    channel_group_id, thread_id, character_profile, name, username, role, character_avatar,
-                    title, description, hashtags, keywords, cta, theme, audience, voice_style, media_type,
-                    template_type, scheduled_date, scheduled_time, user_id, created_by, content_id, 
-                    platform_id, media_files, selected_platforms, platform, service_type, platform_icon, 
-                    type, status
-                ) VALUES (
-                    %(scheduled_post_id)s, %(social_platform)s, %(post_content)s, %(external_post_id)s, 
-                    %(posted_at)s, %(url)s, %(channel_group_id)s, %(thread_id)s, %(character_profile)s, 
-                    %(name)s, %(username)s, %(role)s, %(character_avatar)s, %(title)s, %(description)s, 
-                    %(hashtags)s, %(keywords)s, %(cta)s, %(theme)s, %(audience)s, %(voice_style)s, 
-                    %(media_type)s, %(template_type)s, %(scheduled_date)s, %(scheduled_time)s, %(user_id)s, 
-                    %(created_by)s, %(content_id)s, %(platform_id)s, %(media_files)s, %(selected_platforms)s,
-                    %(platform)s, %(service_type)s, %(platform_icon)s, %(type)s, %(status)s
-                )
-            """
-            
-            cursor.execute(insert_query, dashboard_post)
-            conn.commit()
+            supabase.table('dashboard_posts').insert(dashboard_post).execute()
             print(f"✅ Inserted into dashboard_posts")
         except Exception as e:
             print(f"⚠️ Failed to insert into dashboard_posts: {str(e)}")
-            conn.rollback()
         
         # Delete from scheduled_posts
         try:
-            delete_query = """
-                DELETE FROM scheduled_posts
-                WHERE id = %s AND service_type = %s
-            """
-            
-            cursor.execute(delete_query, (post['id'], SERVICE_TYPE))
-            conn.commit()
+            supabase.table('scheduled_posts')\
+                .delete()\
+                .eq('id', post['id'])\
+                .eq('service_type', SERVICE_TYPE)\
+                .execute()
             print(f"✅ Deleted post {post['id']} from scheduled_posts")
         except Exception as e:
             print(f"⚠️ Failed to delete from scheduled_posts: {str(e)}")
-            conn.rollback()
         
         print(f"✅ Post {post['id']} completed successfully")
         
@@ -619,10 +491,6 @@ def process_post(post):
         should_retry = new_attempts < max_retries
         
         try:
-            if not conn:
-                conn = get_db_connection()
-                cursor = conn.cursor()
-            
             update_data = {
                 'post_status': 'failed',
                 'attempts': new_attempts
@@ -631,32 +499,16 @@ def process_post(post):
             if not should_retry:
                 update_data['posting_status'] = 'failed'
             
-            update_query = """
-                UPDATE scheduled_posts
-                SET post_status = %s, attempts = %s
-            """
-            params = [update_data['post_status'], update_data['attempts']]
-            
-            if not should_retry:
-                update_query += ", posting_status = %s"
-                params.append(update_data['posting_status'])
-            
-            update_query += " WHERE id = %s AND service_type = %s"
-            params.extend([post['id'], SERVICE_TYPE])
-            
-            cursor.execute(update_query, params)
-            conn.commit()
+            supabase.table('scheduled_posts')\
+                .update(update_data)\
+                .eq('id', post['id'])\
+                .eq('service_type', SERVICE_TYPE)\
+                .execute()
         except Exception as fail_error:
             print(f"Failed to update error status: {str(fail_error)}")
-            if conn:
-                conn.rollback()
         
         raise
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+
 
 def process_jobs():
     """Process all due jobs"""
