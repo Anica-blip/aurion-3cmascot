@@ -476,6 +476,53 @@ async def whichsupabase(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }.get(mode, mode)
     await update.message.reply_text(f"Supabase mode: {mode}\n{desc}")
 
+async def test_tables(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Direct test of Supabase client queries on faq and fact tables"""
+    if USE_MODE is None:
+        await update.message.reply_text("❌ No DB client configured (USE_MODE is None)")
+        return
+    
+    if USE_MODE == "pg":
+        await update.message.reply_text("⚠️ Using Direct Postgres - use /dbstatus instead")
+        return
+    
+    results = []
+    results.append(f"🔍 Testing Supabase REST API queries\n")
+    results.append(f"Mode: {USE_MODE}\n")
+    results.append(f"="*40 + "\n")
+    
+    # Test FAQ table
+    try:
+        results.append("Testing 'faq' table...\n")
+        response = supabase.table("faq").select("*").limit(1).execute()
+        results.append(f"✅ FAQ SUCCESS\n")
+        results.append(f"Data: {response.data}\n")
+        results.append(f"Count: {response.count}\n")
+    except Exception as e:
+        results.append(f"❌ FAQ FAILED\n")
+        results.append(f"Error: {str(e)}\n")
+        results.append(f"Type: {type(e).__name__}\n")
+    
+    results.append(f"\n" + "="*40 + "\n")
+    
+    # Test FACT table
+    try:
+        results.append("Testing 'fact' table...\n")
+        response = supabase.table("fact").select("*").limit(1).execute()
+        results.append(f"✅ FACT SUCCESS\n")
+        results.append(f"Data: {response.data}\n")
+        results.append(f"Count: {response.count}\n")
+    except Exception as e:
+        results.append(f"❌ FACT FAILED\n")
+        results.append(f"Error: {str(e)}\n")
+        results.append(f"Type: {type(e).__name__}\n")
+    
+    message = "".join(results)
+    if len(message) > 4000:
+        message = message[:4000] + "\n\n...[truncated]"
+    
+    await update.message.reply_text(message)
+
 # Error handler
 async def error_handler(update, context):
     logger.error("Exception while handling an update:", exc_info=context.error)
@@ -507,6 +554,7 @@ def main():
     app.add_handler(CommandHandler("topics", topics))
     app.add_handler(CommandHandler("dbstatus", dbstatus))
     app.add_handler(CommandHandler("whichsupabase", whichsupabase))
+    app.add_handler(CommandHandler("testtables", test_tables))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u,c: None))
     app.add_error_handler(error_handler)
 
@@ -522,5 +570,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
-    
