@@ -85,16 +85,8 @@ SUPABASE_URL = extract_supabase_url(SUPABASE_DB_URL)
 # ============================================
 # CREATE SUPABASE CLIENT
 # ============================================
-supabase = create_client(
-    SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE_KEY,
-    options={
-        'headers': {
-            'apikey': SUPABASE_SERVICE_ROLE_KEY,
-            'Authorization': f'Bearer {SUPABASE_SERVICE_ROLE_KEY}'
-        }
-    }
-)
+# Python supabase-py automatically handles headers when using SERVICE_ROLE_KEY
+supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 print(f"[{datetime.now(WEST).isoformat()}] Render Background Worker initialized")
 print(f"Supabase URL: {SUPABASE_URL}")
