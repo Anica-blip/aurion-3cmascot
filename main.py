@@ -101,17 +101,8 @@ def init_db_clients():
     if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and SUPABASE_AVAILABLE:
         print("Attempting Supabase REST API with SERVICE_ROLE_KEY...")
         try:
-            # Create client with SERVICE_ROLE_KEY and proper headers (like TypeScript version)
-            supabase = create_client(
-                SUPABASE_URL, 
-                SUPABASE_SERVICE_ROLE_KEY,
-                options={
-                    'headers': {
-                        'apikey': SUPABASE_SERVICE_ROLE_KEY,
-                        'Authorization': f'Bearer {SUPABASE_SERVICE_ROLE_KEY}'
-                    }
-                }
-            )
+            # Python supabase-py automatically handles headers for SERVICE_ROLE_KEY
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
             USE_MODE = "rest_service"
             logger.info("DB mode: Supabase REST service role (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY).")
             print("✅ SUCCESS: Connected via Supabase REST API (SERVICE ROLE)")
@@ -124,17 +115,8 @@ def init_db_clients():
     if SUPABASE_URL and SUPABASE_ANON_KEY and SUPABASE_AVAILABLE:
         print("Attempting Supabase REST API with ANON_KEY...")
         try:
-            # Create client with ANON_KEY and proper headers
-            supabase = create_client(
-                SUPABASE_URL,
-                SUPABASE_ANON_KEY,
-                options={
-                    'headers': {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': f'Bearer {SUPABASE_ANON_KEY}'
-                    }
-                }
-            )
+            # Python supabase-py automatically handles headers for ANON_KEY
+            supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
             USE_MODE = "rest_anon"
             logger.info("DB mode: Supabase REST anon (SUPABASE_URL + SUPABASE_ANON_KEY).")
             print("✅ SUCCESS: Connected via Supabase REST API (ANON)")
@@ -428,7 +410,7 @@ TOPICS_LIST = [
     ("Aurion Gems", "https://t.me/c/2377255109/138"),
     ("ClubHouse Chatroom", "https://t.me/c/2377255109/10"),
     ("ClubHouse News & Releases", "https://t.me/c/2377255109/6"),
-    ("ClubHouse Notices", "https://t.me/c/2377255109/1"),
+    ("ClubHouse Notices", "https://t.me/c/2377255109/674"),
     ("Weekly Challenges", "https://t.me/c/2377255109/39"),
     ("ClubHouse Mini-Challenges", "https://t.me/c/2377255109/25"),
     ("ClubHouse Learning", "https://t.me/c/2377255109/12"),
@@ -590,4 +572,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
