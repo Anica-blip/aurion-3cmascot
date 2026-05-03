@@ -1,5 +1,13 @@
 # aurion-3cmascot
 
+This project is part of the 3C Thread To Success™ ecosystem — a growing digital platform that combines creativity, structure, and real-world application.
+
+The 3C Thread To Success™ brand, including its name, structure, characters (Aurion 3C Mascot), and overall system design, remains the intellectual property of the creator and is not included in this license.
+
+Commercial use of the brand or replication of the ecosystem identity is not permitted without permission.
+
+---
+
 A simple Telegram bot connected to OpenAI, ready to deploy on Render, Railway, or similar.
 
 ## Features
@@ -34,3 +42,25 @@ If you want to run locally:
 ## License
 
 This project is licensed under the MIT License.
+
+---
+
+## 🎨 Credits
+
+*Designed and Built by GitHub Copilot × Chef Anica · 3C Thread To Success™ Cooking Lab*  🧪👨‍🍳
+
+---
+
+## 👤 Creator
+
+Anica-blip (“Chef”)
+Founder of 3C Thread To Success™ ("Cooking Lab")
+Independent Creator | Community Builder
+
+---
+
+🧠 Philosophy
+
+“Think it. Do it. Own it.”
+
+This project was built from vision, persistence, and a commitment to creating meaningful and structured experiences — even with minimal resources.
