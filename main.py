@@ -64,10 +64,13 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 
 # Telegram numeric user ID allowed to run admin/debug commands (/dbstatus, /whichsupabase,
-# /testtables). ASSUMPTION pending Chef's confirmation: reusing SYSTEM_USER_ID, which is
-# already set as an env var on this service, for this purpose. If that's not the right
-# variable, tell me and I'll point this at a different one.
-ADMIN_USER_ID = (os.getenv("SYSTEM_USER_ID") or "").strip()
+# /testtables). CORRECTED (2026-09-06): SYSTEM_USER_ID is NOT this — Chef confirmed it's
+# a Supabase-side identifier the bot writes into tables, unrelated to Telegram command
+# permissions. This is a NEW, separate env var Chef needs to add in Render once she has
+# her own Telegram numeric user ID (get it from @userinfobot on Telegram). Until
+# BOT_ADMIN_TELEGRAM_ID is set, these commands are locked for everyone, including Chef —
+# fail closed, not fail open, since the whole point is keeping them away from bad actors.
+ADMIN_USER_ID = (os.getenv("BOT_ADMIN_TELEGRAM_ID") or "").strip()
 
 # Runtime vars
 USE_MODE = None  # "pg", "rest_service", "rest_anon", or None
@@ -305,7 +308,8 @@ def ensure_signoff_once(answer, signoff):
 
 def is_admin(update: Update) -> bool:
     """Restricts admin/debug commands to Chef. Reads Telegram numeric user ID from
-    SYSTEM_USER_ID — flagged for Chef to confirm that's the right variable to reuse."""
+    BOT_ADMIN_TELEGRAM_ID (new env var — see note above). Fails closed: if it's not
+    set yet, nobody can run these commands, including Chef, until it's configured."""
     if not ADMIN_USER_ID or not update.effective_user:
         return False
     return str(update.effective_user.id) == ADMIN_USER_ID
