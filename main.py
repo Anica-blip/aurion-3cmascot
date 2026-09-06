@@ -17,13 +17,13 @@ from telegram.ext import (
 from openai import OpenAI
 import traceback
 
-# Import scheduled_posts_runner to run both bot and scheduler in same process
-try:
-    import scheduled_posts_runner
-    SCHEDULER_AVAILABLE = True
-except ImportError as e:
-    SCHEDULER_AVAILABLE = False
-    scheduled_posts_runner = None
+# NOTE (2026-09-06 cleanup): scheduled_posts_runner is no longer imported/started here.
+# Scheduled posting is handled entirely by the separate Render Cron Job
+# ("scheduled-posts-processor", Node/render-cron.ts in the 3c-control-center repo).
+# Running it a second time from inside this bot was leftover from an earlier setup
+# and only added a way for the whole bot to crash if that module's own credential
+# checks failed at import time. If scheduled_posts_runner.py is still needed for
+# something else, it can stay in the repo unused — just no longer imported here.
 
 # Optional imports for DB clients — try to import but handle missing libs gracefully.
 SUPABASE_AVAILABLE = False
@@ -55,10 +55,19 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # 2) Service Role REST: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (bypasses RLS)
 # 3) Anonymous REST: SUPABASE_URL + SUPABASE_ANON_KEY (has RLS restrictions)
 SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "")
+# SUPABASE_SECRET_KEY is intentionally kept even though it isn't read further down in
+# this file — Chef confirmed (2026-09-06) this is part of an extra Supabase auth layer
+# added on purpose beyond the anon key. Left alone, not removed.
 SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+
+# Telegram numeric user ID allowed to run admin/debug commands (/dbstatus, /whichsupabase,
+# /testtables). ASSUMPTION pending Chef's confirmation: reusing SYSTEM_USER_ID, which is
+# already set as an env var on this service, for this purpose. If that's not the right
+# variable, tell me and I'll point this at a different one.
+ADMIN_USER_ID = (os.getenv("SYSTEM_USER_ID") or "").strip()
 
 # Runtime vars
 USE_MODE = None  # "pg", "rest_service", "rest_anon", or None
@@ -269,6 +278,22 @@ WELCOME = (
     "Let's embark on this adventure and make a difference —one gem at a time."
 )
 
+# NEW (2026-09-06): welcome/goodbye for people joining or leaving the group itself —
+# separate from WELCOME above, which only fires on someone DMing /start to the bot.
+# Wording lightly polished from Chef's draft; SIGNOFF reused instead of retyping it.
+WELCOME_NEW_MEMBER = (
+    "Hey Champ, nice to have you join the 3C community! 🎉\n\n"
+    "Take your time to explore around and ask me anything. "
+    "You'll find the cards here in this folder to know how to speak to me — "
+    "it's going to be fun getting to speak to you too.\n\n"
+    + SIGNOFF
+)
+
+GOODBYE_MEMBER = (
+    "Hey Champ, we hope you enjoyed your time with us. Welcome back anytime.\n\n"
+    + SIGNOFF
+)
+
 RULES_LINK = "https://t.me/c/2377255109/6/400"
 
 def ensure_signoff_once(answer, signoff):
@@ -277,6 +302,13 @@ def ensure_signoff_once(answer, signoff):
     if not answer.endswith(('.', '!', '?')):
         answer += '.'
     return answer + ' ' + signoff
+
+def is_admin(update: Update) -> bool:
+    """Restricts admin/debug commands to Chef. Reads Telegram numeric user ID from
+    SYSTEM_USER_ID — flagged for Chef to confirm that's the right variable to reuse."""
+    if not ADMIN_USER_ID or not update.effective_user:
+        return False
+    return str(update.effective_user.id) == ADMIN_USER_ID
 
 # Handlers use executor to call sync DB functions
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -327,6 +359,9 @@ async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Sorry, Champ! Aurion can't fetch this right now due to technical issues.")
 
 async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # NOTE: still points at a "resources" table that does not currently exist in
+    # Supabase (confirmed 2026-09-06) — left untouched pending Chef's decision on
+    # whether to create that table, wire this to something else, or retire it.
     if USE_MODE is None:
         await update.message.reply_text("Database not configured. Admins: check SUPABASE env vars.")
         return
@@ -352,6 +387,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await loop.run_in_executor(None, mark_greeted_sync, user_id)
     else:
         await update.message.reply_text(random.choice(processing_messages))
+
+# NEW (2026-09-06): fires when someone joins the group itself (not the /start DM flow).
+async def welcome_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.message.new_chat_members:
+        return
+    thread_id = update.message.message_thread_id
+    for member in update.message.new_chat_members:
+        if member.is_bot:
+            continue
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=WELCOME_NEW_MEMBER,
+            message_thread_id=thread_id,
+        )
+
+# NEW (2026-09-06): fires when someone leaves/is removed from the group.
+async def farewell_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.message.left_chat_member:
+        return
+    member = update.message.left_chat_member
+    if member.is_bot:
+        return
+    thread_id = update.message.message_thread_id
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=GOODBYE_MEMBER,
+        message_thread_id=thread_id,
+    )
 
 async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -442,8 +505,12 @@ def extract_message_thread_id(link):
             return int(match.group('topicid'))
     return None
 
-# Debug commands
+# Debug commands — now gated to Chef only (2026-09-06). Previously any group member
+# could run these and see raw DB status/sample data; that's why they're gated now.
 async def dbstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await update.message.reply_text("This command is only available to the Aurion team, Champ.")
+        return
     if USE_MODE is None:
         await update.message.reply_text("DB client not configured (USE_MODE is None).")
         return
@@ -469,6 +536,9 @@ async def dbstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("DB status:\n" + text)
 
 async def whichsupabase(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update):
+        await update.message.reply_text("This command is only available to the Aurion team, Champ.")
+        return
     mode = USE_MODE or "none"
     desc = {
         "pg": "Direct Postgres (SUPABASE_DB_URL)",
@@ -480,19 +550,22 @@ async def whichsupabase(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def test_tables(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Direct test of Supabase client queries on faq and fact tables"""
+    if not is_admin(update):
+        await update.message.reply_text("This command is only available to the Aurion team, Champ.")
+        return
     if USE_MODE is None:
         await update.message.reply_text("❌ No DB client configured (USE_MODE is None)")
         return
-    
+
     if USE_MODE == "pg":
         await update.message.reply_text("⚠️ Using Direct Postgres - use /dbstatus instead")
         return
-    
+
     results = []
     results.append(f"🔍 Testing Supabase REST API queries\n")
     results.append(f"Mode: {USE_MODE}\n")
     results.append(f"="*40 + "\n")
-    
+
     # Test FAQ table
     try:
         results.append("Testing 'faq' table...\n")
@@ -504,9 +577,9 @@ async def test_tables(update: Update, context: ContextTypes.DEFAULT_TYPE):
         results.append(f"❌ FAQ FAILED\n")
         results.append(f"Error: {str(e)}\n")
         results.append(f"Type: {type(e).__name__}\n")
-    
+
     results.append(f"\n" + "="*40 + "\n")
-    
+
     # Test FACT table
     try:
         results.append("Testing 'fact' table...\n")
@@ -518,11 +591,11 @@ async def test_tables(update: Update, context: ContextTypes.DEFAULT_TYPE):
         results.append(f"❌ FACT FAILED\n")
         results.append(f"Error: {str(e)}\n")
         results.append(f"Type: {type(e).__name__}\n")
-    
+
     message = "".join(results)
     if len(message) > 4000:
         message = message[:4000] + "\n\n...[truncated]"
-    
+
     await update.message.reply_text(message)
 
 # Error handler
@@ -534,9 +607,14 @@ async def error_handler(update, context):
 
 # Main
 def main():
-    if not TELEGRAM_TOKEN or not OPENAI_API_KEY:
-        logger.error("Missing TELEGRAM_BOT_TOKEN or OPENAI_API_KEY")
+    if not TELEGRAM_TOKEN:
+        logger.error("Missing TELEGRAM_BOT_TOKEN")
         return
+    if not OPENAI_API_KEY:
+        # CHANGED (2026-09-06): missing OpenAI key used to abort the entire bot at
+        # startup. It's only needed for the /ask AI fallback (FAQ matches and every
+        # other command work without it), so this is now just a warning.
+        logger.warning("OPENAI_API_KEY not set — /ask will only be able to use FAQ matches, no AI fallback.")
 
     logger.info(f"Aurion starting. USE_MODE={USE_MODE}")
 
@@ -557,15 +635,16 @@ def main():
     app.add_handler(CommandHandler("dbstatus", dbstatus))
     app.add_handler(CommandHandler("whichsupabase", whichsupabase))
     app.add_handler(CommandHandler("testtables", test_tables))
+    # NEW (2026-09-06): join/leave greeting handlers — must be registered before the
+    # generic text handler below so they get first look at those service messages.
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_members))
+    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u,c: None))
     app.add_error_handler(error_handler)
 
-    # Start scheduled_posts_runner in background thread (if available)
-    if SCHEDULER_AVAILABLE and scheduled_posts_runner:
-        logger.info("🚀 Starting scheduled_posts_runner in background thread...")
-        scheduled_posts_runner.start_scheduler()
-    else:
-        logger.warning("⚠️ scheduled_posts_runner not available - scheduled posts will not run")
+    # NOTE (2026-09-06): scheduled_posts_runner is no longer started here — see the
+    # note at the top of this file. Scheduled posting is handled by the separate
+    # Render Cron Job in the 3c-control-center repo.
 
     logger.info("Aurion bot starting in interactive mode...")
     app.run_polling()
