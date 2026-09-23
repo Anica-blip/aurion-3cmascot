@@ -64,12 +64,9 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 
 # Telegram numeric user ID allowed to run admin/debug commands (/dbstatus, /whichsupabase,
-# /testtables). CORRECTED (2026-09-06): SYSTEM_USER_ID is NOT this — Chef confirmed it's
-# a Supabase-side identifier the bot writes into tables, unrelated to Telegram command
-# permissions. This is a NEW, separate env var Chef needs to add in Render once she has
-# her own Telegram numeric user ID (get it from @userinfobot on Telegram). Until
-# BOT_ADMIN_TELEGRAM_ID is set, these commands are locked for everyone, including Chef —
-# fail closed, not fail open, since the whole point is keeping them away from bad actors.
+# /testtables). This is a dedicated env var Chef adds in Render once she has her real
+# Telegram numeric ID (from @userinfobot). Fails closed: locked for everyone, including
+# Chef, until it's set.
 ADMIN_USER_ID = (os.getenv("BOT_ADMIN_TELEGRAM_ID") or "").strip()
 
 # Runtime vars
@@ -246,18 +243,6 @@ def fetch_facts_list_sync():
         logger.error(f"fetch_facts_list_sync error: {e}")
     return []
 
-def fetch_resources_list_sync():
-    try:
-        if USE_MODE == "pg":
-            rows = run_pg_query("SELECT title, link FROM public.resources ORDER BY id")
-            return rows or []
-        elif USE_MODE in ("rest_anon", "rest_service"):
-            res = supabase_select("resources", select_clause="title,link")
-            return res.data or []
-    except Exception as e:
-        logger.error(f"fetch_resources_list_sync error: {e}")
-    return []
-
 # ------- Bot logic / handlers -------
 processing_messages = [
     "Hey Champ, give me a second to help you with that!",
@@ -268,22 +253,23 @@ processing_messages = [
 
 SIGNOFF = 'Keep crushing it, Champ! Aurion'
 
+# UPDATED (2026-09-23): Chef rewrote the /start welcome — the old long version
+# repeated the 3c-links plug that /id already covers, and was no longer a fit for
+# where the community is now. New version is short and explains how /ask works,
+# since that's the one thing newcomers most need spelled out. Sent with
+# parse_mode="HTML" (see start() below) so the <u> tag actually underlines instead
+# of showing as literal text.
 WELCOME = (
-    "Welcome to 3C Thread To Success –your ultimate space for personal transformation and growth. "
-    "Whether you're dreaming big or taking small steps, we're here to help you think it, do it, and own it!\n\n"
-    "You've just joined a vibrant community built to turn your life into a purpose-driven adventure —filled with clarity, confidence, and courage. 🌱\n\n"
-    "💎 Here's something we believe in deeply:\n"
-    "Every person is a diamond —even if you're still buried in the rough. Growth isn't about becoming someone else... "
-    "it's about polishing what's already there. So take your time, trust the process, and shine brighter with every step.\n\n"
-    "For everything you need, head over to:\n👉 https://anica-blip.github.io/3c-links/\n"
-    "There you'll find our success links, tools, goal setting, challenges, and more. Or just send me a message —I'm Aurion, your guide along this journey.\n\n"
-    "Together, we rise. Together, we polish. Together, we shine. 💫\n"
-    "Let's embark on this adventure and make a difference —one gem at a time."
+    "Hey Champ, this is where our journey together begins! I'm here to guide you "
+    "and help with anything community-related.\n\n"
+    "Just remember to type /ask <u>followed by your question</u> whenever you want "
+    "to talk to me. I don't listen in on conversations between members, so a little "
+    "nudge is all it takes to get my attention.\n\n"
+    + SIGNOFF
 )
 
-# NEW (2026-09-06): welcome/goodbye for people joining or leaving the group itself —
-# separate from WELCOME above, which only fires on someone DMing /start to the bot.
-# Wording lightly polished from Chef's draft; SIGNOFF reused instead of retyping it.
+# Welcome/goodbye for people joining or leaving the group itself — separate from
+# WELCOME above, which only fires on someone DMing /start to the bot.
 WELCOME_NEW_MEMBER = (
     "Hey Champ, nice to have you join the 3C community! 🎉\n\n"
     "Take your time to explore around and ask me anything. "
@@ -308,8 +294,8 @@ def ensure_signoff_once(answer, signoff):
 
 def is_admin(update: Update) -> bool:
     """Restricts admin/debug commands to Chef. Reads Telegram numeric user ID from
-    BOT_ADMIN_TELEGRAM_ID (new env var — see note above). Fails closed: if it's not
-    set yet, nobody can run these commands, including Chef, until it's configured."""
+    BOT_ADMIN_TELEGRAM_ID. Fails closed: if it's not set yet, nobody can run these
+    commands, including Chef, until it's configured."""
     if not ADMIN_USER_ID or not update.effective_user:
         return False
     return str(update.effective_user.id) == ADMIN_USER_ID
@@ -362,37 +348,20 @@ async def fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Sorry, Champ! Aurion can't fetch this right now due to technical issues.")
 
-async def resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # NOTE: still points at a "resources" table that does not currently exist in
-    # Supabase (confirmed 2026-09-06) — left untouched pending Chef's decision on
-    # whether to create that table, wire this to something else, or retire it.
-    if USE_MODE is None:
-        await update.message.reply_text("Database not configured. Admins: check SUPABASE env vars.")
-        return
-    loop = asyncio.get_event_loop()
-    try:
-        resources_list = await loop.run_in_executor(None, fetch_resources_list_sync)
-    except Exception as e:
-        logger.error(f"Error fetching resources: {e}")
-        resources_list = []
-    if not resources_list:
-        await update.message.reply_text("Sorry, Champ! Aurion can't fetch this right now due to technical issues.")
-        return
-    msg_lines = [f"[{item['title']}]({item['link']})" for item in resources_list]
-    await update.message.reply_text("Here are some resources:\n" + "\n".join(msg_lines), parse_mode="Markdown")
-
 # Simple greeting/marking
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     loop = asyncio.get_event_loop()
     greeted = await loop.run_in_executor(None, has_greeted_sync, user_id)
     if not greeted:
-        await update.message.reply_text(WELCOME)
+        # UPDATED (2026-09-23): parse_mode="HTML" added so the <u> tag in WELCOME
+        # renders as an actual underline instead of showing the raw tag text.
+        await update.message.reply_text(WELCOME, parse_mode="HTML")
         await loop.run_in_executor(None, mark_greeted_sync, user_id)
     else:
         await update.message.reply_text(random.choice(processing_messages))
 
-# NEW (2026-09-06): fires when someone joins the group itself (not the /start DM flow).
+# Fires when someone joins the group itself (not the /start DM flow).
 async def welcome_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.new_chat_members:
         return
@@ -406,7 +375,7 @@ async def welcome_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE
             message_thread_id=thread_id,
         )
 
-# NEW (2026-09-06): fires when someone leaves/is removed from the group.
+# Fires when someone leaves/is removed from the group.
 async def farewell_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.message.left_chat_member:
         return
@@ -468,7 +437,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "You can ask Aurion for tips, facts, or guidance. Try:\n"
         "/faq – Browse FAQs\n"
         "/fact – Get a random fact\n"
-        "/resources – View resources\n"
         "/rules – View community rules\n"
         "/id – Get the 3C Links web app\n"
     )
@@ -509,8 +477,8 @@ def extract_message_thread_id(link):
             return int(match.group('topicid'))
     return None
 
-# Debug commands — now gated to Chef only (2026-09-06). Previously any group member
-# could run these and see raw DB status/sample data; that's why they're gated now.
+# Debug commands — gated to Chef only. Previously any group member could run these
+# and see raw DB status/sample data; that's why they're gated now.
 async def dbstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         await update.message.reply_text("This command is only available to the Aurion team, Champ.")
@@ -615,9 +583,9 @@ def main():
         logger.error("Missing TELEGRAM_BOT_TOKEN")
         return
     if not OPENAI_API_KEY:
-        # CHANGED (2026-09-06): missing OpenAI key used to abort the entire bot at
-        # startup. It's only needed for the /ask AI fallback (FAQ matches and every
-        # other command work without it), so this is now just a warning.
+        # Missing OpenAI key used to abort the entire bot at startup. It's only
+        # needed for the /ask AI fallback (FAQ matches and every other command work
+        # without it), so this is now just a warning.
         logger.warning("OPENAI_API_KEY not set — /ask will only be able to use FAQ matches, no AI fallback.")
 
     logger.info(f"Aurion starting. USE_MODE={USE_MODE}")
@@ -630,7 +598,6 @@ def main():
     app.add_handler(CommandHandler("faq", faq))
     app.add_handler(CallbackQueryHandler(faq_button, pattern="^faq_"))
     app.add_handler(CommandHandler("fact", fact))
-    app.add_handler(CommandHandler("resources", resources))
     app.add_handler(CommandHandler("id", id_command))
     app.add_handler(CommandHandler("rules", rules_command))
     app.add_handler(CommandHandler("help", help_command))
@@ -639,16 +606,16 @@ def main():
     app.add_handler(CommandHandler("dbstatus", dbstatus))
     app.add_handler(CommandHandler("whichsupabase", whichsupabase))
     app.add_handler(CommandHandler("testtables", test_tables))
-    # NEW (2026-09-06): join/leave greeting handlers — must be registered before the
-    # generic text handler below so they get first look at those service messages.
+    # Join/leave greeting handlers — registered before the generic text handler
+    # below so they get first look at those service messages.
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_members))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, farewell_member))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u,c: None))
     app.add_error_handler(error_handler)
 
-    # NOTE (2026-09-06): scheduled_posts_runner is no longer started here — see the
-    # note at the top of this file. Scheduled posting is handled by the separate
-    # Render Cron Job in the 3c-control-center repo.
+    # NOTE: scheduled_posts_runner is no longer started here — see the note at the
+    # top of this file. Scheduled posting is handled by the separate Render Cron
+    # Job in the 3c-control-center repo.
 
     logger.info("Aurion bot starting in interactive mode...")
     app.run_polling()
