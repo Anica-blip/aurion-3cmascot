@@ -207,6 +207,44 @@ def get_faq_answer_sync(user_question):
         logger.error(f"get_faq_answer_sync error: {e}")
     return None
 
+# NEW (2026-09-23): backup lookup for /ask, checked only when the faq table has no
+# match. The `keyword` table (Control Center project) was created by Chef but never
+# read by any code until now. Its `keyword` column can hold several comma-separated
+# trigger words in one row (see id 7: "thank you, thanks, appreciate it"), so this
+# checks each trigger as a whole-word, case-insensitive match against the user's
+# question rather than the substring-of-a-full-question style /faq uses. When more
+# than one trigger matches, the longest (most specific) one wins — e.g. "aurion
+# vault" beats the standalone "aurion" keyword for "tell me about the aurion vault".
+def get_keyword_answer_sync(user_question):
+    try:
+        if USE_MODE == "pg":
+            rows = run_pg_query("SELECT keyword, answer FROM public.keyword")
+        elif USE_MODE in ("rest_anon", "rest_service"):
+            res = supabase_select("keyword", select_clause="keyword,answer")
+            rows = res.data or []
+        else:
+            return None
+    except Exception as e:
+        logger.error(f"get_keyword_answer_sync error: {e}")
+        return None
+
+    best_answer = None
+    best_len = 0
+    for row in rows or []:
+        answer = row.get("answer")
+        raw_keywords = row.get("keyword")
+        if not raw_keywords or not answer:
+            continue
+        for trigger in raw_keywords.split(","):
+            trigger = trigger.strip()
+            if not trigger:
+                continue
+            if re.search(r'\b' + re.escape(trigger) + r'\b', user_question, re.IGNORECASE):
+                if len(trigger) > best_len:
+                    best_len = len(trigger)
+                    best_answer = answer
+    return best_answer
+
 def fetch_faq_list_sync():
     try:
         if USE_MODE == "pg":
@@ -402,25 +440,31 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if faq_answer:
             answer = ensure_signoff_once(faq_answer, SIGNOFF)
         else:
-            if not openai_client:
-                raise RuntimeError("OpenAI client not configured (OPENAI_API_KEY missing).")
-            system_prompt = (
-                "You are Aurion, the 3C Mascot: energetic, motivating, a bit cheeky, and always supportive. "
-                "Reply in 1-2 short paragraphs. Vary your phrasing for returning users. "
-                "After your answer, always add this signoff, no line break, just space after the last full stop: "
-                "'Keep crushing it, Champ! Aurion'"
-            )
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_question}
-            ]
-            response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,
-                max_tokens=300
-            )
-            answer = response.choices[0].message.content.strip()
-            answer = ensure_signoff_once(answer, SIGNOFF)
+            # NEW (2026-09-23): keyword table checked as a backup before falling to
+            # OpenAI — see get_keyword_answer_sync above.
+            keyword_answer = await loop.run_in_executor(None, get_keyword_answer_sync, user_question)
+            if keyword_answer:
+                answer = ensure_signoff_once(keyword_answer, SIGNOFF)
+            else:
+                if not openai_client:
+                    raise RuntimeError("OpenAI client not configured (OPENAI_API_KEY missing).")
+                system_prompt = (
+                    "You are Aurion, the 3C Mascot: energetic, motivating, a bit cheeky, and always supportive. "
+                    "Reply in 1-2 short paragraphs. Vary your phrasing for returning users. "
+                    "After your answer, always add this signoff, no line break, just space after the last full stop: "
+                    "'Keep crushing it, Champ! Aurion'"
+                )
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_question}
+                ]
+                response = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=messages,
+                    max_tokens=300
+                )
+                answer = response.choices[0].message.content.strip()
+                answer = ensure_signoff_once(answer, SIGNOFF)
         await update.message.reply_text(answer)
     except Exception as e:
         logger.error(f"Ask handler error: {e}")
