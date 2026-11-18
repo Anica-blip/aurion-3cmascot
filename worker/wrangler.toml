@@ -1,0 +1,12 @@
+# Repo path: worker/wrangler.toml
+# Record of the Worker's settings. Chef deploys by pasting worker.js into the
+# Cloudflare dashboard (no Wrangler CLI needed). If Wrangler is ever used instead,
+# this file is what it reads: `wrangler deploy` run from the worker/ folder.
+# Secrets are NOT stored here. They are added in Cloudflare (Settings > Variables and Secrets).
+name = "aurion-bot"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[observability]
+enabled = true
