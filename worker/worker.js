@@ -17,7 +17,11 @@
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, BOT_ADMIN_TELEGRAM_ID
 //
 // SUPABASE: 3C Control Center project, REST + service key only. Tables: faq, fact,
-//   keyword, greeted_users (column telegram_user_id).
+//   keyword, greeted_users (column telegram_user_id), about_3c (the briefing the AI
+//   reads; written by Chief in the Drive sheet tab about_3c, service key only).
+//
+// DEPLOY METHOD: Dashboard paste (Cloudflare > Workers & Pages > aurion-bot > Edit code).
+//   One method only. Never mix with Wrangler. wrangler.toml is a record, not used to deploy.
 // ---------------------------------------------------------------------------
 
 // ===== Fixed texts: extracted from main.py by script, not retyped =====
@@ -110,7 +114,10 @@ const T = {
   "dbStatusPrefix": "DB status:\n",
   "truncated": "\n\n...[truncated]",
   "openaiSystemPrompt": "You are Aurion, the 3C Mascot: energetic, motivating, a bit cheeky, and always supportive. Reply in 1-2 short paragraphs. Vary your phrasing for returning users. After your answer, always add this signoff, no line break, just space after the last full stop: 'Keep crushing it, Champ! Aurion'",
-  "askFailure": "Champ, give me a moment, we're having some tech issues right now. Aurion is on it, so please try again in a little while."
+  "askFailure": "Champ, give me a moment, we're having some tech issues right now. Aurion is on it, so please try again in a little while.",
+  "aboutRules": "Rules for answering (set by the 3C team):\n- Use only the 3C information below and the member's question. Do not add facts about 3C from anywhere else.\n- If the answer is not covered below, say so warmly and point the member to the 3C Public Library, or to Drop In in the Pop In folder to reach the team. Share a link only if it appears below.\n- Never invent facts, links, dates, prices or promises about future content.\n- Never give health, money or legal advice; kindly suggest a qualified professional.",
+  "aboutHeading": "3C information (written by the 3C team):",
+  "aboutMissing": "The 3C information could not be loaded right now. Do not state facts about 3C. Warmly point the member to the 3C Public Library instead."
 };
 
 // ===== End of fixed texts =====
@@ -333,15 +340,37 @@ async function fetchFacts(env) {
 
 // ---------- OpenAI ----------
 
+// The briefing the AI reads with every question (table about_3c, id order). If it cannot
+// be read, the AI is told so and must not state facts about 3C.
+async function fetchAbout(env) {
+  try {
+    const rows = (await sb(env, "about_3c?select=id,topic,info,link&order=id.asc")) || [];
+    return rows
+      .filter((r) => r && r.info && String(r.info).trim())
+      .map((r) => `- ${String(r.topic || "").trim()}: ${String(r.info).trim()}${r.link ? ` (Link: ${String(r.link).trim()})` : ""}`)
+      .join("\n");
+  } catch (e) {
+    console.error("fetchAbout error:", e && e.message);
+    return "";
+  }
+}
+
+async function buildSystemPrompt(env) {
+  const about = await fetchAbout(env);
+  const briefing = about ? `${T.aboutHeading}\n${about}` : T.aboutMissing;
+  return `${T.openaiSystemPrompt}\n\n${T.aboutRules}\n\n${briefing}`;
+}
+
 async function askOpenAI(env, question) {
   if (!env.OPENAI_API_KEY) throw new Error("OpenAI client not configured (OPENAI_API_KEY missing).");
+  const systemPrompt = await buildSystemPrompt(env);
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${env.OPENAI_API_KEY}` },
     body: JSON.stringify({
       model: "gpt-4o-mini",
       messages: [
-        { role: "system", content: T.openaiSystemPrompt },
+        { role: "system", content: systemPrompt },
         { role: "user", content: question },
       ],
       max_tokens: 300,
