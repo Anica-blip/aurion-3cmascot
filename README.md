@@ -87,7 +87,6 @@ The Worker is one file with no imports: `worker/worker.js`. Addresses, settings,
 - [SETUP.md](SETUP.md) — every connection, setting, deploy step and test, in one place
 - [LEGAL_DISCLAIMER.md](LEGAL_DISCLAIMER.md) — legal terms
 - `supabase/migrations/` — the database changes for this bot, each with a rollback
-- `main.py`, `Procfile`, `runtime.txt`, `requirements.txt`, `scheduled_posts_runner.py` — the earlier version of the bot (retired, kept for reference only, not deployed)
 
 ---
 
