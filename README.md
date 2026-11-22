@@ -1,25 +1,42 @@
-# aurion-3cmascot
+# 💎 Aurion Bot (aurion-3cmascot)
 
 > ⚖️ This repository is protected under a binding [Legal Disclaimer](./LEGAL_DISCLAIMER.md) that governs all use, cloning, and forking from the date of inception. Please read before use.
 
-This project is part of the 3C Thread To Success™ ecosystem — a growing digital platform that combines creativity, structure, and real-world application.
+> Aurion is the 3C community mascot and Telegram bot. He runs as a Cloudflare Worker called `aurion-bot`, answers members in the 3C Telegram community, and posts the scheduled 3C posts on his own timer.
 
-The 3C Thread To Success™ brand, including its name, structure, characters (Aurion 3C Mascot), and overall system design, remains the intellectual property of the creator and is not included in this license.
+---
 
+**⚠️ Intellectual Property Notice**
+This repository is open source under the MIT License — the code skeleton is free to clone and adapt.
+The 3C Thread To Success™ brand, including its name, structure, characters (Caelum, Aurion, Jan, Casey, Anica), persona system (Falcon, Panther, Wolf, Lion), philosophy, and overall ecosystem identity remains the intellectual property of the creator and is **not** included in this license.
 Commercial use of the brand or replication of the ecosystem identity is not permitted without permission.
 
 ---
 
-Aurion is the 3C community mascot and Telegram bot. He runs as a **Cloudflare Worker** (`aurion-bot`) that receives Telegram updates through a webhook, answers from Supabase tables, and uses OpenAI when no stored answer fits.
+## 🎭 The 3C Ecosystem
 
-## How it works
+This project is part of a larger system built around five core identities:
 
-- Telegram sends each update to the Worker at `/telegram`. The Worker checks Telegram's secret header first and ignores anything that does not carry it.
-- Only `message` and `callback_query` updates are accepted.
-- `/ask <question>` looks for an answer in this order: **FAQ** table → **keyword** table → **OpenAI**. If OpenAI is unavailable, Aurion sends a friendly "give me a moment" message and the real error goes to the Worker logs only.
-- New members get the welcome message and leavers get the goodbye, in the same topic. `greeted_users` records who has already been welcomed.
+**Aurion** → Engagement & Experience — 3C Mascot, community voice, diamond-energy guide
+**Caelum** → Structure & Direction — Chief Advisor, PR Manager, Brand Integrity Officer
+**Jan** → Clarity & Support — Writing & Editorial Support, Lifeline Mentor & Anchor
+**Casey** → Story & Play — Creative Director, Lifeline Playmaker & Ace Maven
+**Anica (Founder)** → Authority & Vision — Systems Strategist, Project Architect, the Chef
 
-## Commands
+Together, they create a balanced environment for growth, learning, and progression.
+
+---
+
+## 💎 What Is Aurion Bot?
+
+Aurion is the voice of the 3C Telegram community. Members talk to him with commands. He also posts the scheduled 3C posts that Chef sets up in the 3C Control Center dashboard.
+
+What is inside:
+
+- **Answers.** `/ask <question>` looks for an answer in this order: the FAQ table, then the keyword table, then OpenAI. If OpenAI is not available, Aurion sends a friendly "give me a moment" message and members never see the real error.
+- **Welcome and goodbye.** New members get a welcome and leavers get a goodbye, in the same topic. `greeted_users` records who has been welcomed.
+- **Scheduled posts.** Posts scheduled with the service type `aurion-bot` go out at 08:30, 11:00, 14:00 and 20:55 Lisbon time. Text, pictures, videos and GIFs are supported, and the dashboard's `**bold**`, `*italic*`, `__underline__`, `~~strike~~`, `` `code` `` and `[link](https://...)` symbols are turned into Telegram formatting. Documents (PDF) are not sent: use a thumbnail picture and a link.
+- **Failure messages.** If a post cannot be sent (too long, a missing file, Telegram refusing it, more than 24 hours late), Aurion sends Chef a Telegram message with the post title, the slot and the reason. The post stays in `scheduled_posts`, marked failed, with the reason saved on it.
 
 | Command | What it does |
 |---|---|
@@ -36,67 +53,62 @@ Aurion is the 3C community mascot and Telegram bot. He runs as a **Cloudflare Wo
 
 The command menu members see in Telegram is set in BotFather (`/setcommands`), not in the code.
 
-## Supabase
+---
 
-The bot reads from the **3C Control Center** project. It uses the service key from the Worker's secrets only.
+## ⚙️ How It Is Built
 
-| Table | Used for |
+| Part | What it uses |
 |---|---|
-| `faq` | Question and answer buttons for `/faq`, and the first answer for `/ask` |
-| `fact` | Random facts for `/fact` |
-| `keyword` | Comma-separated triggers and their answers (whole-word match, longest trigger wins). Owner-only read. |
-| `greeted_users` | Members already welcomed (`telegram_user_id`) |
+| Front end | None. Members use Telegram. Chef schedules posts in the 3C Control Center dashboard. |
+| Database | Supabase, project **3C Control Center**: `faq`, `fact`, `keyword`, `greeted_users`, `about_3c`, and for scheduled posts `scheduled_posts` and `dashboard_posts` |
+| Files (R2) | None |
+| Workers | `aurion-bot` on Cloudflare: one private route (`POST /telegram`) and its own timer (8 Cron Triggers) |
+| AI | OpenAI, only when no stored answer fits |
+| Hosting | Cloudflare Workers |
+| Admin access | The Telegram numeric ID kept in the Worker secret `BOT_ADMIN_TELEGRAM_ID` (admin command and failure messages). No web admin. |
 
-## Deploying
+The Worker is one file with no imports: `worker/worker.js`. Addresses, settings, secrets (names only) and the deploy steps are in [SETUP.md](SETUP.md).
 
-The Worker is a single file with no imports: `worker/worker.js`. It is deployed by pasting that file into the Cloudflare dashboard (**Workers & Pages → aurion-bot → Edit code → Deploy**). No Wrangler CLI is needed. `worker/wrangler.toml` is a record of the settings only.
+---
 
-Add these as **Secrets** in the Worker (Settings → Variables and Secrets). Never put values in the repository or share them in chat:
+## 🔐 Security and Privacy
 
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_WEBHOOK_SECRET` (letters, digits, `_` and `-` only)
-- `OPENAI_API_KEY`
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `BOT_ADMIN_TELEGRAM_ID`
+- **Who can call the Worker.** Only Telegram, on `/telegram`, and only with the secret header. Anything else is refused. Any other address answers "not found". No browser calls the Worker, so it sends no CORS headers.
+- **The timer is not a web address.** The scheduled run is started by Cloudflare itself. Nobody can trigger it from outside.
+- **Who can read and write the data.** The Worker reads and writes Supabase with its service key, which lives only in the Worker's secrets. The `keyword` table is owner-only to read. `about_3c` and `greeted_users` are read through the service key only.
+- **Admin.** `/dbstatus` and the failure messages go to one Telegram ID only. If that setting is missing, nobody can run the admin command.
+- **Logs.** Cloudflare Observability (stored logs) is **off for the Worker and for all of Chef's Workers**, and stays off. Failures reach Chef by Telegram message and are saved as a reason on the row, so nothing depends on stored logs.
+- **No secrets in the repository.** Secret values are never in code, files or chat. They are added only in the Cloudflare dashboard.
 
-Register the webhook once with Telegram's `setWebhook`, pointing at the Worker's `/telegram` address, with the same secret as `TELEGRAM_WEBHOOK_SECRET` and `allowed_updates` set to `message` and `callback_query`. Opening `/telegram` in a browser shows "Method not allowed" — that is correct.
+---
 
-Only one thing can receive the bot's updates at a time: while the webhook is set, no other copy of the bot (for example a polling script) can run with the same token.
+## 📖 Documentation
 
-## Files in this repository
-
-- `worker/` — the live bot (`worker.js`, `wrangler.toml`).
-- `main.py`, `Procfile`, `runtime.txt`, `requirements.txt` — the earlier polling version of the bot. Retired and kept for reference only; it is no longer deployed.
-- `scheduled_posts_runner.py` — not part of the bot. Kept for reference.
-- `LEGAL_DISCLAIMER.md`, `LICENSE` — legal and licence terms.
-
-## License
-
-This project is licensed under the MIT License.
+- [SETUP.md](SETUP.md) — every connection, setting, deploy step and test, in one place
+- [LEGAL_DISCLAIMER.md](LEGAL_DISCLAIMER.md) — legal terms
+- `supabase/migrations/` — the database changes for this bot, each with a rollback
+- `main.py`, `Procfile`, `runtime.txt`, `requirements.txt`, `scheduled_posts_runner.py` — the earlier version of the bot (retired, kept for reference only, not deployed)
 
 ---
 
 ## 🎨 Credits
 
-*Designed and Built with ❤ by Claude (Anthropic) × Chef Anica · 3C Thread To Success™ Cooking Lab 🧪👨🍳*
+*Designed and Built with ❤️ by Claude (Anthropic) × Chef Anica · 3C Thread To Success™ Cooking Lab* 🧪👨‍🍳
 
-Think Smarter, Not Harder — Zero Shortcuts
+*"Think Smarter, Not Harder — Zero Shortcuts"*
 
 ---
 
 ## 👤 Creator
 
-Anica-blip ("Chef")
-Founder, 3C Thread To Success™
+**Anica-blip ("Chef")**
+Founder of 3C Thread To Success™ ("Cooking Lab")
 Independent Creator | Community Builder
 
 ---
 
 ## 🧠 Philosophy
 
-"Think it. Do it. Own it."
+*"Think it. Do it. Own it."*
 
-This project was built from vision, persistence, and a commitment to creating meaningful and structured experiences, even with minimal resources.
-
-Our vision: igniting a vibrant community where dreams ignite, and people are fired up to nurture a growth mindset that turns lives into purpose-driven adventures filled with passion!
+This project was built from vision, persistence, and a commitment to creating meaningful and structured experiences — even with minimal resources. Aurion exists so that every member of the community feels welcomed, answered and guided, at the right moment, without Chef having to be there for every one.
