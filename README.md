@@ -35,7 +35,7 @@ What is inside:
 
 - **Answers.** `/ask <question>` looks for an answer in this order: the FAQ table, then the keyword table, then OpenAI. If OpenAI is not available, Aurion sends a friendly "give me a moment" message and members never see the real error.
 - **Welcome and goodbye.** New members get a welcome and leavers get a goodbye, in the same topic. `greeted_users` records who has been welcomed.
-- **Scheduled posts.** Posts scheduled with the service type `aurion-bot` go out at 08:30, 11:00, 14:00 and 20:55 Lisbon time. Text, pictures, videos and GIFs are supported, and the dashboard's `**bold**`, `*italic*`, `__underline__`, `~~strike~~`, `` `code` `` and `[link](https://...)` symbols are turned into Telegram formatting. Documents (PDF) are not sent: use a thumbnail picture and a link.
+- **Scheduled posts.** Posts scheduled with the service type `aurion-bot` go out at the next of these Lisbon times: 08:30, 10:30, 12:30, 14:30, 16:30, 18:30, 19:30 and 20:30 (08:30, 12:30, 18:30 and 20:30 are the four squadron times). Text, pictures, videos and GIFs are supported. Text posts carry no link preview card. The Worker also understands the dashboard's `**bold**`, `*italic*`, `__underline__`, `~~strike~~`, `` `code` `` and `[link](https://...)` symbols and Telegram's own `<b>`, `<i>`, `<u>`, `<s>`, `<code>` and `<a href>` tags; the dashboard is being changed to save ready-made formatting. Documents (PDF) are not sent: use a thumbnail picture and a link.
 - **Failure messages.** If a post cannot be sent (too long, a missing file, Telegram refusing it, more than 24 hours late), Aurion sends Chef a Telegram message with the post title, the slot and the reason. The post stays in `scheduled_posts`, marked failed, with the reason saved on it.
 
 | Command | What it does |
@@ -62,7 +62,7 @@ The command menu members see in Telegram is set in BotFather (`/setcommands`), n
 | Front end | None. Members use Telegram. Chef schedules posts in the 3C Control Center dashboard. |
 | Database | Supabase, project **3C Control Center**: `faq`, `fact`, `keyword`, `greeted_users`, `about_3c`, and for scheduled posts `scheduled_posts` and `dashboard_posts` |
 | Files (R2) | None |
-| Workers | `aurion-bot` on Cloudflare: one private route (`POST /telegram`) and its own timer (8 Cron Triggers) |
+| Workers | `aurion-bot` on Cloudflare: one private route (`POST /telegram`) and its own timer (one Cron Trigger, every half hour) |
 | AI | OpenAI, only when no stored answer fits |
 | Hosting | Cloudflare Workers |
 | Admin access | The Telegram numeric ID kept in the Worker secret `BOT_ADMIN_TELEGRAM_ID` (admin command and failure messages). No web admin. |
