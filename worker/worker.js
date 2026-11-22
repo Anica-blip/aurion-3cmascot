@@ -12,7 +12,7 @@
 // SCHEDULED RUN (no route; Cloudflare Cron Triggers call scheduled()): posts the rows in
 //   scheduled_posts with service_type 'aurion-bot' at 08:30, 10:30, 12:30, 14:30, 16:30, 18:30,
 //   19:30 and 20:30 Lisbon time, moves them to dashboard_posts, and messages BOT_ADMIN_TELEGRAM_ID
-//   when something fails. ONE trigger: 0,30 * * * *  (every half hour; the Worker only acts at its
+//   when something fails. Two or more pictures or videos in one post go out as one Telegram album. ONE trigger: 0,30 * * * *  (every half hour; the Worker only acts at its
 //   own slots, so changing a slot time is a code change only, never a Cloudflare trigger change).
 // The one admin command (/dbstatus) is gated by the Telegram numeric id in
 // BOT_ADMIN_TELEGRAM_ID and fails closed: if that secret is not set, nobody can run it.
@@ -584,6 +584,8 @@ const SCHED = {
   mediaMaxBytes: 45 * 1024 * 1024,
   textMax: 4096,
   captionMax: 1024,
+  albumMax: 10, // Telegram: 2 to 10 pictures or videos in one album
+  albumTotalBytes: 30 * 1024 * 1024, // all files of one album together (Telegram allows 50 MB per request; kept lower for the Worker's memory)
 };
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -823,24 +825,37 @@ function buildPostText(row, mode) {
 
 // ----- Media -----
 
-// First media file: from the row's media_files, else from inside post_content.
-function pickMedia(row) {
+function mediaList(row) {
   let list = Array.isArray(row.media_files) && row.media_files.length ? row.media_files : null;
   if (!list) {
     const pc = contentOf(row);
     if (pc && Array.isArray(pc.media_files) && pc.media_files.length) list = pc.media_files;
   }
-  if (!list) return null;
-  const first = list[0];
-  const url = first && typeof first === "object" ? first.url || first.src || first.supabaseUrl : first;
+  return list;
+}
+
+function classifyMedia(item) {
+  const url = item && typeof item === "object" ? item.url || item.src || item.supabaseUrl : item;
   if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return { error: "The media file has no usable web address." };
-  const type = String((first && first.type) || "").toLowerCase();
-  const name = String((first && first.name) || "").toLowerCase();
+  const type = String((item && item.type) || "").toLowerCase();
+  const name = String((item && item.name) || "").toLowerCase();
   const path = url.split(/[?#]/)[0].toLowerCase();
   let kind = "photo";
   if (type === "animation" || type === "gif" || path.endsWith(".gif") || name.endsWith(".gif")) kind = "animation";
   else if (type === "video" || /\.(mp4|mov|avi|mkv|webm)$/.test(path)) kind = "video";
   return { url, kind };
+}
+
+// First media file: from the row's media_files, else from inside post_content.
+function pickMedia(row) {
+  const list = mediaList(row);
+  return list ? classifyMedia(list[0]) : null;
+}
+
+// Two or more files in one post: all of them, in the saved order (sent as an album).
+function pickAlbum(row) {
+  const list = mediaList(row);
+  return list && list.length > 1 ? list.map(classifyMedia) : null;
 }
 
 const MEDIA_SEND = {
@@ -887,7 +902,7 @@ async function schedTg(env, method, payload, file) {
     if (file) {
       const form = new FormData();
       for (const [k, v] of Object.entries(payload)) if (v !== undefined && v !== null) form.append(k, String(v));
-      form.append(file.field, new Blob([file.bytes], { type: file.mime }), file.name);
+      for (const f of Array.isArray(file) ? file : [file]) form.append(f.field, new Blob([f.bytes], { type: f.mime }), f.name);
       res = await fetch(url, { method: "POST", body: form });
     } else {
       res = await fetch(url, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(payload) });
@@ -903,7 +918,8 @@ async function schedTg(env, method, payload, file) {
     data = null;
   }
   if (res.ok && data && data.ok) {
-    const id = data.result && data.result.message_id;
+    const first = Array.isArray(data.result) ? data.result[0] : data.result; // an album answers with a list: the first message counts
+    const id = first && first.message_id;
     return { ok: true, status: res.status, messageId: id !== undefined && id !== null ? String(id) : null };
   }
   return { ok: false, status: res.status, description: (data && data.description) || `HTTP ${res.status}` };
@@ -919,6 +935,19 @@ async function deliverRow(env, row, chatId, thread, media, file) {
     const text = buildPostText(row, mode);
     const payload = { chat_id: chatId };
     if (thread) payload.message_thread_id = thread;
+    if (Array.isArray(file)) {
+      // album: the caption sits on the first item
+      const items = file.map((f, i) => {
+        const it = { type: f.kind, media: `attach://${f.field}` };
+        if (i === 0 && text) {
+          it.caption = text;
+          if (mode === "html") it.parse_mode = "HTML";
+        }
+        return it;
+      });
+      payload.media = JSON.stringify(items);
+      return schedTg(env, "sendMediaGroup", payload, file);
+    }
     if (mode === "html") payload.parse_mode = "HTML";
     if (file) {
       if (text) payload.caption = text;
@@ -1126,6 +1155,8 @@ async function processRow(env, row, origStatus, slot) {
     if (!row.post_content && !row.description && !row.title) return failRow(env, row, slot, "The row has no content (no post_content, title or description).");
 
     const m = threadFrom(row.thread_id);
+    const album = pickAlbum(row);
+    if (album) return await processAlbum(env, row, origStatus, slot, chatId, m, album);
     const media = pickMedia(row);
     if (media && media.error) return failRow(env, row, slot, media.error);
 
@@ -1159,6 +1190,43 @@ async function processRow(env, row, origStatus, slot) {
     console.error("processRow error:", (e && e.stack) || e);
     await retryOrFail(env, row, origStatus, slot, "Unexpected error: " + String((e && e.message) || e).slice(0, 200));
   }
+}
+
+// Two or more pictures or videos in one post: one album, caption on the first item.
+async function processAlbum(env, row, origStatus, slot, chatId, thread, items) {
+  const bad = items.find((i) => i.error);
+  if (bad) return failRow(env, row, slot, bad.error);
+  if (items.length > SCHED.albumMax) {
+    return failRow(env, row, slot, `The post has ${items.length} files. Telegram allows at most ${SCHED.albumMax} in one album.`);
+  }
+  if (items.some((i) => i.kind === "animation")) {
+    return failRow(env, row, slot, "A GIF cannot be sent inside an album. Send the GIF as its own post.");
+  }
+  const len = visibleLength(buildPostText(row, "html"));
+  if (len > SCHED.captionMax) {
+    return failRow(env, row, slot, `The text is ${len} characters. Telegram allows at most 1,024 when pictures or videos are attached.`);
+  }
+  const files = [];
+  let total = 0;
+  for (let i = 0; i < items.length; i++) {
+    const dl = await fetchMedia(items[i].url);
+    if (dl.error) {
+      const why = `File ${i + 1} of ${items.length}: ${dl.error}`;
+      return dl.outage ? retryOrFail(env, row, origStatus, slot, why) : failRow(env, row, slot, why);
+    }
+    total += dl.bytes.byteLength;
+    if (total > SCHED.albumTotalBytes) {
+      return failRow(env, row, slot, `The files together are over ${(SCHED.albumTotalBytes / 1048576).toFixed(0)} MB, the limit for one album.`);
+    }
+    const spec = MEDIA_SEND[items[i].kind];
+    files.push({ field: `f${i}`, kind: items[i].kind, mime: spec.mime, bytes: dl.bytes, name: dl.name || spec.def });
+  }
+  const r = await deliverRow(env, row, chatId, thread, null, files);
+  if (!r.ok) {
+    const why = `Telegram said: ${r.description}`;
+    return isOutage(r) ? retryOrFail(env, row, origStatus, slot, why) : failRow(env, row, slot, why);
+  }
+  await bookkeepSent(env, row, r, slot, items[0].kind);
 }
 
 function threadFrom(threadId) {
