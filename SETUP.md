@@ -94,11 +94,11 @@ Live: `/faq` answered after the 22 Nov deploy. First live test of the schedule: 
 - First live run of the schedule (22 Nov, 08:30) and the picture, GIF and video tests: results to be added here.
 - `worker/wrangler.toml` still says observability enabled in the old copy; the new copy sets it to `false` (it is only a record).
 - A scheduled row needs a real `user_id`; if it is missing, the post is sent but cannot be saved in `dashboard_posts`, and Chef is messaged. `post_platforms` has a link to `scheduled_posts` without cascade: if a row ever has entries there, the delete step fails and Chef is messaged.
-- Retired files kept for reference (`main.py`, `Procfile`, `runtime.txt`, `requirements.txt`, `scheduled_posts_runner.py`): Chef decides when to remove them.
+- The old Python bot files (`main.py`, `Procfile`, `runtime.txt`, `requirements.txt`, `scheduled_posts_runner.py`) were removed on 22 Nov 2026. They stay in the Git history if ever needed.
 
 ## 10. Change log
 
 | Date | Change | By |
 |---|---|---|
-| 22 Nov 2026 | Scheduled posting added to `worker/worker.js` (own timer, 8 Cron Triggers, lane `aurion-bot`); Render, the Vercel gateway and the old workflow removed; observability off for all Workers; README.md and SETUP.md written to the Standard; database clean-up migrations of 21 Nov saved in `supabase/migrations/` | Champ |
+| 22 Nov 2026 | Scheduled posting added to `worker/worker.js` (own timer, 8 Cron Triggers, lane `aurion-bot`); Render, the Vercel gateway and the old workflow removed; observability off for all Workers; README.md and SETUP.md written to the Standard; old Python bot files removed; database clean-up migrations of 21 Nov saved in `supabase/migrations/` | Champ |
 | 20 Nov 2026 | Bot moved from Render to the Cloudflare Worker `aurion-bot`; `about_3c` table added | Champ |
