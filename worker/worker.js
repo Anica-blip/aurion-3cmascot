@@ -9,6 +9,10 @@
 //   any other method on /telegram -> 405
 //   everything else               -> 404
 // No browser calls this Worker, so no CORS headers are sent.
+// SCHEDULED RUN (no route; Cloudflare Cron Triggers call scheduled()): posts the rows in
+//   scheduled_posts with service_type 'aurion-bot' at 08:30, 11:00, 14:00 and 20:55 Lisbon time,
+//   moves them to dashboard_posts, and messages BOT_ADMIN_TELEGRAM_ID when something fails.
+//   8 triggers (UTC): 30 8, 30 7, 0 11, 0 10, 0 14, 0 13, 55 20, 55 19  (* * * each).
 // The one admin command (/dbstatus) is gated by the Telegram numeric id in
 // BOT_ADMIN_TELEGRAM_ID and fails closed: if that secret is not set, nobody can run it.
 //
@@ -19,6 +23,7 @@
 // SUPABASE: 3C Control Center project, REST + service key only. Tables: faq, fact,
 //   keyword, greeted_users (column telegram_user_id), about_3c (the briefing the AI
 //   reads; written by Chief in the Drive sheet tab about_3c, service key only).
+//   Scheduled run also reads and writes scheduled_posts and writes dashboard_posts.
 //
 // DEPLOY METHOD: Dashboard paste (Cloudflare > Workers & Pages > aurion-bot > Edit code).
 //   One method only. Never mix with Wrangler. wrangler.toml is a record, not used to deploy.
@@ -558,6 +563,623 @@ async function handleUpdate(env, update) {
   }
 }
 
+// ---------- Scheduled posting (Cloudflare Cron Triggers) ----------
+// The Worker's own timer. Lane = scheduled_posts.service_type 'aurion-bot'.
+// Slots (Lisbon time): 08:30, 11:00, 14:00, 20:55. Cron Triggers run in UTC, so each slot has
+// two triggers (winter UTC time and the summer time one hour earlier); the run itself checks
+// the real Lisbon clock and does nothing unless it is exactly a slot. See SETUP.md.
+
+const SCHED = {
+  lane: "aurion-bot",
+  zone: "Europe/Lisbon",
+  slots: ["08:30", "11:00", "14:00", "20:55"],
+  maxPerRun: 20, // rows sent in one run; the rest wait for the next slot
+  lockMinutes: 10,
+  maxTries: 3, // first try + 2 more, only for outages
+  overdueMs: 24 * 60 * 60 * 1000,
+  mediaMaxBytes: 45 * 1024 * 1024,
+  textMax: 4096,
+  captionMax: 1024,
+};
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+// Lisbon wall-clock date and time for an instant (same method as the Render runner: Intl).
+function lisbonParts(ms) {
+  const parts = {};
+  const fmt = new Intl.DateTimeFormat("en-GB", {
+    timeZone: SCHED.zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+  for (const p of fmt.formatToParts(new Date(ms))) if (p.type !== "literal") parts[p.type] = p.value;
+  const hour = parts.hour === "24" ? "00" : parts.hour;
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${hour}:${parts.minute}:${parts.second}`, hm: `${hour}:${parts.minute}` };
+}
+
+// Wall-clock "YYYY-MM-DD" + "HH:MM[:SS]" as a comparable number (NaN when unreadable).
+function wallStamp(dateStr, timeStr) {
+  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ""));
+  const t = /^(\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(timeStr || ""));
+  if (!d || !t) return NaN;
+  return Date.UTC(+d[1], +d[2] - 1, +d[3], +t[1], +t[2], +(t[3] || 0));
+}
+
+// ----- Text -> Telegram HTML -----
+
+function escHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+const MARK_TAG = { "**": "b", "__": "u", "~~": "s", "*": "i", "_": "i" };
+
+// Input is already HTML-escaped. Turns **bold**, __underline__, ~~strike~~, *italic*, _italic_
+// into tags that are always properly nested; a marker with no partner stays as plain text.
+function inlineFormat(s) {
+  const isWord = (c) => c !== undefined && /[\p{L}\p{N}_]/u.test(c);
+  const items = [];
+  let buf = "";
+  let i = 0;
+  while (i < s.length) {
+    const two = s.substr(i, 2);
+    const c = s[i];
+    let m = null;
+    if (two === "**" || two === "__" || two === "~~") m = two;
+    else if (c === "*" || c === "_") m = c;
+    if (!m) {
+      buf += c;
+      i++;
+      continue;
+    }
+    const prev = i > 0 ? s[i - 1] : undefined;
+    const next = s[i + m.length];
+    let canOpen = next !== undefined && !/\s/.test(next);
+    let canClose = prev !== undefined && !/\s/.test(prev);
+    if (m === "_") {
+      canOpen = canOpen && !isWord(prev);
+      canClose = canClose && !isWord(next);
+    }
+    if (buf) items.push({ text: buf });
+    buf = "";
+    items.push({ mark: m, canOpen, canClose, pair: null, role: null });
+    i += m.length;
+  }
+  if (buf) items.push({ text: buf });
+
+  const stack = [];
+  let pairId = 0;
+  for (let k = 0; k < items.length; k++) {
+    const it = items[k];
+    if (!it.mark) continue;
+    let j = -1;
+    if (it.canClose) {
+      for (let x = stack.length - 1; x >= 0; x--) {
+        if (items[stack[x]].mark === it.mark) {
+          j = x;
+          break;
+        }
+      }
+    }
+    if (j >= 0) {
+      const o = items[stack[j]];
+      stack.splice(j, 1);
+      pairId++;
+      o.pair = it.pair = pairId;
+      o.role = "open";
+      it.role = "close";
+    } else if (it.canOpen) {
+      stack.push(k);
+    }
+  }
+
+  let out = "";
+  let open = []; // currently open tags: { pair, tag }
+  for (const it of items) {
+    if (it.text !== undefined) {
+      out += it.text;
+    } else if (it.role === "open") {
+      out += `<${MARK_TAG[it.mark]}>`;
+      open.push({ pair: it.pair, tag: MARK_TAG[it.mark] });
+    } else if (it.role === "close") {
+      const p = open.findIndex((e) => e.pair === it.pair);
+      const popped = open.splice(p);
+      for (let x = popped.length - 1; x >= 0; x--) out += `</${popped[x].tag}>`;
+      for (let x = 1; x < popped.length; x++) {
+        out += `<${popped[x].tag}>`;
+        open.push(popped[x]);
+      }
+    } else {
+      out += it.mark; // marker with no partner: literal text
+    }
+  }
+  for (let x = open.length - 1; x >= 0; x--) out += `</${open[x].tag}>`; // safety: never leave a tag open
+  let prevOut;
+  do {
+    prevOut = out;
+    out = out.replace(/<(b|i|u|s)><\/\1>/g, "");
+  } while (out !== prevOut);
+  return out;
+}
+
+// Dashboard text (with ** * _ __ ~~ ` [text](url)) -> Telegram HTML. < > & are made safe first.
+function mdToHtml(raw) {
+  let s = escHtml(String(raw).replace(/\u0000/g, ""));
+  const keep = [];
+  const hold = (html) => {
+    keep.push(html);
+    return `\u0000${keep.length - 1}\u0000`;
+  };
+  s = s.replace(/`([^`\n]+)`/g, (_m, c) => hold(`<code>${c}</code>`));
+  s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_m, label, url) =>
+    hold(`<a href="${url.replace(/"/g, "%22")}">${inlineFormat(label)}</a>`)
+  );
+  s = inlineFormat(s);
+  for (let n = 0; n < 3 && s.includes("\u0000"); n++) {
+    s = s.replace(/\u0000(\d+)\u0000/g, (_m, idx) => keep[+idx]);
+  }
+  return s;
+}
+
+// Same text with no formatting at all (used only if Telegram refuses the formatted version).
+function mdToPlain(raw) {
+  return String(raw)
+    .replace(/\u0000/g, "")
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1 ($2)")
+    .replace(/\*\*|__|~~|`/g, "");
+}
+
+function visibleLength(html) {
+  return html.replace(/<[^>]*>/g, "").replace(/&(amp|lt|gt);/g, "x").length;
+}
+
+function contentOf(row) {
+  const pc = row.post_content;
+  return pc && typeof pc === "object" && !Array.isArray(pc) ? pc : null;
+}
+
+// Same layout as the Render runner (name block, title, description, hashtags, cta),
+// but the converter runs on every row.
+function buildPostText(row, mode) {
+  const html = mode === "html";
+  const esc = html ? escHtml : (x) => String(x);
+  const fmt = html ? mdToHtml : mdToPlain;
+  const tagLine = (list) => list.map((t) => String(t)).map((t) => (t.startsWith("#") ? t : `#${t}`)).join(" ");
+  const pc = contentOf(row);
+  let out = "";
+  if (!pc) {
+    if (row.title) out += `${fmt(row.title)}\n\n`;
+    if (row.description) out += `${fmt(row.description)}\n`;
+    if (Array.isArray(row.hashtags) && row.hashtags.length) out += `\n${esc(tagLine(row.hashtags))}`;
+    if (row.cta) out += `\n\n👉 ${fmt(row.cta)}`;
+    return out.trim();
+  }
+  const name = pc.name || row.name;
+  const username = pc.username || row.username;
+  const role = pc.role || row.role;
+  if (name) {
+    out += html ? `<b>${esc(name)}</b>\n` : `${name}\n`;
+    if (username) {
+      const u = String(username);
+      out += `${esc(u.startsWith("@") ? u : `@${u}`)}\n`;
+    }
+    if (role) out += `${esc(role)}\n`;
+    out += "\n";
+  }
+  if (pc.title) out += `${fmt(pc.title)}\n\n`;
+  if (pc.description) out += `${fmt(pc.description)}\n`;
+  if (Array.isArray(pc.hashtags) && pc.hashtags.length) out += `\n${esc(tagLine(pc.hashtags))}`;
+  if (pc.cta) out += `\n\n👉 ${fmt(pc.cta)}`;
+  return out.trim();
+}
+
+// ----- Media -----
+
+// First media file: from the row's media_files, else from inside post_content.
+function pickMedia(row) {
+  let list = Array.isArray(row.media_files) && row.media_files.length ? row.media_files : null;
+  if (!list) {
+    const pc = contentOf(row);
+    if (pc && Array.isArray(pc.media_files) && pc.media_files.length) list = pc.media_files;
+  }
+  if (!list) return null;
+  const first = list[0];
+  const url = first && typeof first === "object" ? first.url || first.src || first.supabaseUrl : first;
+  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return { error: "The media file has no usable web address." };
+  const type = String((first && first.type) || "").toLowerCase();
+  const name = String((first && first.name) || "").toLowerCase();
+  const path = url.split(/[?#]/)[0].toLowerCase();
+  let kind = "photo";
+  if (type === "animation" || type === "gif" || path.endsWith(".gif") || name.endsWith(".gif")) kind = "animation";
+  else if (type === "video" || /\.(mp4|mov|avi|mkv|webm)$/.test(path)) kind = "video";
+  return { url, kind };
+}
+
+const MEDIA_SEND = {
+  photo: { method: "sendPhoto", field: "photo", mime: "image/jpeg", def: "photo.jpg" },
+  video: { method: "sendVideo", field: "video", mime: "video/mp4", def: "video.mp4" },
+  animation: { method: "sendAnimation", field: "animation", mime: "image/gif", def: "animation.gif" },
+};
+
+async function fetchMedia(url) {
+  let res;
+  try {
+    res = await fetch(url);
+  } catch (e) {
+    return { error: "Could not reach the media file address.", outage: true };
+  }
+  if (!res.ok) {
+    return { error: `Could not download the media file (HTTP ${res.status}).`, outage: res.status >= 500 || res.status === 429 };
+  }
+  const tooBig = (n) => ({ error: `The media file is ${(n / 1048576).toFixed(1)} MB; the limit is 45 MB.`, outage: false });
+  const len = Number(res.headers.get("content-length"));
+  if (len > SCHED.mediaMaxBytes) return tooBig(len);
+  let bytes;
+  try {
+    bytes = await res.arrayBuffer();
+  } catch (e) {
+    return { error: "The download of the media file was interrupted.", outage: true };
+  }
+  if (bytes.byteLength > SCHED.mediaMaxBytes) return tooBig(bytes.byteLength);
+  let name = url.split(/[?#]/)[0].split("/").pop() || "";
+  try {
+    name = decodeURIComponent(name);
+  } catch (e) {
+    /* keep as is */
+  }
+  return { bytes, name };
+}
+
+// ----- Telegram sending (reports the outcome instead of throwing) -----
+
+async function schedTg(env, method, payload, file) {
+  const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`;
+  let res;
+  try {
+    if (file) {
+      const form = new FormData();
+      for (const [k, v] of Object.entries(payload)) if (v !== undefined && v !== null) form.append(k, String(v));
+      form.append(file.field, new Blob([file.bytes], { type: file.mime }), file.name);
+      res = await fetch(url, { method: "POST", body: form });
+    } else {
+      res = await fetch(url, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(payload) });
+    }
+  } catch (e) {
+    // never include the URL: it contains the bot token
+    return { ok: false, status: 0, description: "Network error while talking to Telegram" };
+  }
+  let data = null;
+  try {
+    data = await res.json();
+  } catch (e) {
+    data = null;
+  }
+  if (res.ok && data && data.ok) {
+    const id = data.result && data.result.message_id;
+    return { ok: true, status: res.status, messageId: id !== undefined && id !== null ? String(id) : null };
+  }
+  return { ok: false, status: res.status, description: (data && data.description) || `HTTP ${res.status}` };
+}
+
+function isOutage(r) {
+  return r.status === 0 || r.status === 429 || r.status >= 500;
+}
+
+// Formatted first; if Telegram refuses the formatting, the same post goes once more as plain text.
+async function deliverRow(env, row, chatId, thread, media, file) {
+  const attempt = (mode) => {
+    const text = buildPostText(row, mode);
+    const payload = { chat_id: chatId };
+    if (thread) payload.message_thread_id = thread;
+    if (mode === "html") payload.parse_mode = "HTML";
+    if (file) {
+      if (text) payload.caption = text;
+      return schedTg(env, MEDIA_SEND[media.kind].method, payload, file);
+    }
+    payload.text = text;
+    return schedTg(env, "sendMessage", payload);
+  };
+  const first = await attempt("html");
+  if (!first.ok && first.status === 400 && /can't parse entities|can't find end/i.test(first.description || "")) {
+    const second = await attempt("plain");
+    if (second.ok) second.plain = true;
+    return second;
+  }
+  return first;
+}
+
+// ----- Supabase rows -----
+
+function rowTitle(row) {
+  const pc = contentOf(row);
+  const t = String(row.title || (pc && pc.title) || row.id || "(no title)");
+  return mdToPlain(t).replace(/\s+/g, " ").slice(0, 80);
+}
+
+async function alertChef(env, text) {
+  if (!env.TELEGRAM_BOT_TOKEN || !env.BOT_ADMIN_TELEGRAM_ID) {
+    console.error("Could not alert Chef: bot token or BOT_ADMIN_TELEGRAM_ID is missing");
+    return;
+  }
+  try {
+    await tg(env, "sendMessage", { chat_id: env.BOT_ADMIN_TELEGRAM_ID, text: String(text).slice(0, 3800) });
+  } catch (e) {
+    console.error("Could not alert Chef:", e && e.message);
+  }
+}
+
+// One conditional update on one row; returns the rows that changed.
+async function patchRow(env, row, extraFilter, body) {
+  const q = `scheduled_posts?id=eq.${encodeURIComponent(row.id)}&service_type=eq.${SCHED.lane}${extraFilter || ""}`;
+  return sb(env, q, { method: "PATCH", headers: { ...JSON_HEADERS, Prefer: "return=representation" }, body: JSON.stringify(body) });
+}
+
+// Content problem: no retry. Row stays in scheduled_posts, marked failed, with the reason; Chef is told.
+async function failRow(env, row, slot, reason, whatNow) {
+  let note = "";
+  try {
+    const hit = await patchRow(env, row, "&posting_status=eq.pending", {
+      posting_status: "failed",
+      status: "failed",
+      failure_reason: String(reason).slice(0, 500),
+      runner_locked_until: null,
+      updated_at: new Date().toISOString(),
+    });
+    if (!hit || !hit.length) return; // someone else already dealt with this row
+  } catch (e) {
+    console.error("failRow update error:", e && e.message);
+    note = "\n(I could not mark the row as failed; please check it in scheduled_posts.)";
+  }
+  console.error(`Scheduled post ${row.id} failed: ${reason}`);
+  await alertChef(
+    env,
+    `⚠️ Aurion post NOT sent\nPost: ${rowTitle(row)}\nSlot: ${slot} (Lisbon)\nWhy: ${reason}\n` +
+      (whatNow || "What now: the row is still in scheduled_posts, marked failed. Delete it, fix the content and schedule it again.") +
+      note
+  );
+}
+
+// Outage: count the try and put the row back for the next slot; after the last try, tell Chef.
+async function retryOrFail(env, row, origStatus, slot, reason) {
+  const tries = (Number(row.attempts) || 0) + 1;
+  if (tries >= SCHED.maxTries) {
+    await failRow(env, row, slot, `${reason} (gave up after ${SCHED.maxTries} tries)`);
+    return;
+  }
+  console.error(`Scheduled post ${row.id}: try ${tries} of ${SCHED.maxTries} failed: ${reason}`);
+  try {
+    await patchRow(env, row, "&posting_status=eq.pending", {
+      status: origStatus,
+      attempts: tries,
+      failure_reason: `Try ${tries} of ${SCHED.maxTries}: ${String(reason).slice(0, 300)}`,
+      runner_locked_until: null,
+      updated_at: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.error("retryOrFail update error:", e && e.message);
+  }
+}
+
+function buildDashboardRecord(row, messageId, sentAtIso, mediaKind) {
+  const pc = contentOf(row) || {};
+  const f = (k) => row[k] || pc[k] || null;
+  const chat = row.channel_group_id;
+  const rec = {
+    scheduled_post_id: row.id,
+    social_platform: row.social_platform,
+    post_content: row.post_content,
+    external_post_id: messageId || "unknown",
+    posted_at: sentAtIso,
+    url: messageId ? `https://t.me/c/${String(chat).replace("-100", "")}/${messageId}` : row.url,
+    channel_group_id: chat,
+    thread_id: row.thread_id,
+    character_profile: f("character_profile"),
+    name: f("name"),
+    username: f("username"),
+    role: f("role"),
+    character_avatar: f("character_avatar"),
+    title: f("title"),
+    description: f("description"),
+    hashtags: f("hashtags"),
+    keywords: f("keywords"),
+    cta: f("cta"),
+    theme: f("theme"),
+    audience: f("audience"),
+    voice_style: f("voice_style"),
+    media_type: f("media_type"),
+    template_type: f("template_type"),
+    scheduled_date: row.scheduled_date,
+    scheduled_time: row.scheduled_time,
+    user_id: row.user_id,
+    created_by: row.created_by,
+    content_id: row.content_id,
+    platform_id: row.platform_id,
+    media_files: f("media_files"),
+    selected_platforms: f("selected_platforms"),
+    platform: row.platform,
+    service_type: SCHED.lane,
+    platform_icon: row.platform_icon,
+    type: row.type,
+  };
+  // dashboard_posts requires these five; scheduled_posts does not. Safe values only when empty.
+  if (!rec.theme) rec.theme = "general";
+  if (!rec.audience) rec.audience = "community";
+  if (!rec.media_type) rec.media_type = mediaKind ? (mediaKind === "photo" ? "image" : mediaKind) : "text";
+  if (!rec.template_type) rec.template_type = "social_media";
+  if (!rec.description) rec.description = rec.title || buildPostText(row, "plain").slice(0, 200) || "Posted by aurion-bot";
+  // the proper "sent" labels
+  Object.assign(rec, {
+    post_status: "complete",
+    posting_status: "sent",
+    status: "complete",
+    delivery_status: "sent",
+    completed_at: sentAtIso,
+    runner_name: SCHED.lane,
+    run_by: SCHED.lane,
+  });
+  return Object.fromEntries(Object.entries(rec).filter(([, v]) => v !== null && v !== undefined));
+}
+
+// Everything after Telegram accepted the post. Nothing here can send again.
+async function bookkeepSent(env, row, sendResult, slot, mediaKind) {
+  const problems = [];
+  const sentAt = new Date().toISOString();
+  try {
+    await patchRow(env, row, "", {
+      posting_status: "sent",
+      status: "complete",
+      failure_reason: null,
+      runner_locked_until: null,
+      updated_at: sentAt,
+    });
+  } catch (e) {
+    problems.push("the row could not be marked as sent");
+    console.error("mark sent error:", e && e.message);
+  }
+  let saved = false;
+  try {
+    await sb(env, "dashboard_posts", {
+      method: "POST",
+      headers: { ...JSON_HEADERS, Prefer: "return=minimal" },
+      body: JSON.stringify(buildDashboardRecord(row, sendResult.messageId, sentAt, mediaKind)),
+    });
+    saved = true;
+  } catch (e) {
+    problems.push("it could not be saved in dashboard_posts (" + String((e && e.message) || e).slice(0, 200) + ")");
+    console.error("dashboard_posts insert error:", e && e.message);
+  }
+  if (saved) {
+    try {
+      await sb(env, `scheduled_posts?id=eq.${encodeURIComponent(row.id)}&service_type=eq.${SCHED.lane}`, { method: "DELETE" });
+    } catch (e) {
+      problems.push("it could not be removed from scheduled_posts (" + String((e && e.message) || e).slice(0, 200) + ")");
+      console.error("scheduled_posts delete error:", e && e.message);
+    }
+  }
+  const lines = [];
+  if (problems.length) {
+    lines.push(
+      `⚠️ Aurion post SENT, but the housekeeping needs you\nPost: ${rowTitle(row)}\nSlot: ${slot} (Lisbon)\nThe post is in Telegram, but ${problems.join("; and ")}.\n` +
+        (saved ? "What now: delete the row from scheduled_posts by hand." : "What now: the row stays in scheduled_posts (it will not be sent again). Move it to dashboard_posts by hand.")
+    );
+  }
+  if (sendResult.plain) {
+    lines.push(`ℹ️ Aurion post went out as PLAIN text (Telegram refused the formatting)\nPost: ${rowTitle(row)}\nSlot: ${slot} (Lisbon)\nCheck the ** * _ [] symbols in the text on the dashboard.`);
+  }
+  for (const l of lines) await alertChef(env, l);
+}
+
+// One claimed row: check, build, send, book. Failures go to failRow / retryOrFail.
+async function processRow(env, row, origStatus, slot) {
+  try {
+    const chatId = row.channel_group_id;
+    if (!chatId) return failRow(env, row, slot, "The row has no channel_group_id (where to post).");
+    if (!row.post_content && !row.description && !row.title) return failRow(env, row, slot, "The row has no content (no post_content, title or description).");
+
+    const m = threadFrom(row.thread_id);
+    const media = pickMedia(row);
+    if (media && media.error) return failRow(env, row, slot, media.error);
+
+    const htmlText = buildPostText(row, "html");
+    if (!htmlText && !media) return failRow(env, row, slot, "There is no text to post.");
+    const len = visibleLength(htmlText);
+    if (media && len > SCHED.captionMax) {
+      return failRow(env, row, slot, `The text is ${len} characters. Telegram allows at most 1,024 when a picture, video or GIF is attached.`);
+    }
+    if (!media && len > SCHED.textMax) {
+      return failRow(env, row, slot, `The text is ${len} characters. Telegram allows at most 4,096 in a text post.`);
+    }
+
+    let file = null;
+    if (media) {
+      const dl = await fetchMedia(media.url);
+      if (dl.error) {
+        return dl.outage ? retryOrFail(env, row, origStatus, slot, dl.error) : failRow(env, row, slot, dl.error);
+      }
+      const spec = MEDIA_SEND[media.kind];
+      file = { field: spec.field, mime: spec.mime, bytes: dl.bytes, name: dl.name || spec.def };
+    }
+
+    const r = await deliverRow(env, row, chatId, m, media, file);
+    if (!r.ok) {
+      const why = `Telegram said: ${r.description}`;
+      return isOutage(r) ? retryOrFail(env, row, origStatus, slot, why) : failRow(env, row, slot, why);
+    }
+    await bookkeepSent(env, row, r, slot, media ? media.kind : null);
+  } catch (e) {
+    console.error("processRow error:", (e && e.stack) || e);
+    await retryOrFail(env, row, origStatus, slot, "Unexpected error: " + String((e && e.message) || e).slice(0, 200));
+  }
+}
+
+function threadFrom(threadId) {
+  const m = String(threadId || "").match(/(\d+)$/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+async function runScheduled(env, event) {
+  const nowMs = event && typeof event.scheduledTime === "number" ? event.scheduledTime : Date.now();
+  const now = lisbonParts(nowMs);
+  if (!SCHED.slots.includes(now.hm)) return; // the other trigger of the pair: nothing to do, no log
+  if (!dbConfigured(env) || !env.TELEGRAM_BOT_TOKEN) {
+    console.error("Scheduled run skipped: the Worker is missing its Supabase or Telegram settings");
+    await alertChef(env, `⚠️ Aurion scheduled run (${now.hm} Lisbon) did nothing: a required setting is missing in the Worker (Supabase address or key, or the bot token).`);
+    return;
+  }
+  const nowStamp = wallStamp(now.date, now.time);
+  const rows = await sb(
+    env,
+    `scheduled_posts?select=*&service_type=eq.${SCHED.lane}&posting_status=eq.pending&order=scheduled_date.asc&limit=100`
+  );
+  let sentCount = 0;
+  for (const row of rows || []) {
+    const postStamp = wallStamp(String(row.scheduled_date || "").slice(0, 10), row.scheduled_time);
+    if (Number.isNaN(postStamp)) {
+      await failRow(env, row, now.hm, "The scheduled date or time on the row cannot be read.");
+      continue;
+    }
+    if (postStamp > nowStamp) continue; // not due yet
+
+    if (row.status === "processing") {
+      const lockedUntil = Date.parse(row.runner_locked_until || "");
+      if (lockedUntil > Date.now()) continue; // another run is working on it right now
+      // The lock ran out: a run stopped mid-send. Never send it again blindly.
+      await failRow(
+        env,
+        row,
+        now.hm,
+        "A previous run stopped while sending this post, so I cannot tell whether it went out.",
+        "What now: check the Telegram topic first. If it is there, delete the row. If not, delete it and schedule it again."
+      );
+      continue;
+    }
+
+    if (nowStamp - postStamp > SCHED.overdueMs) {
+      await failRow(env, row, now.hm, `It was more than 24 hours late (scheduled ${String(row.scheduled_date).slice(0, 10)} ${String(row.scheduled_time).slice(0, 5)}), so I did not send it.`);
+      continue;
+    }
+
+    if (sentCount >= SCHED.maxPerRun) break; // the rest wait for the next slot
+    let claimed;
+    try {
+      claimed = await patchRow(env, row, "&posting_status=eq.pending&or=(status.is.null,status.neq.processing)", {
+        status: "processing",
+        runner_locked_until: new Date(Date.now() + SCHED.lockMinutes * 60000).toISOString(),
+      });
+    } catch (e) {
+      console.error("claim error:", e && e.message);
+      continue;
+    }
+    if (!claimed || !claimed.length) continue; // another run won this row
+    sentCount++;
+    await processRow(env, claimed[0], row.status || "scheduled", now.hm);
+  }
+}
+
 // ---------- Entry point ----------
 
 export default {
@@ -591,5 +1213,15 @@ export default {
       console.error("fetch error:", (e && e.stack) || e);
       return new Response("OK", { status: 200 });
     }
+  },
+
+  // Cloudflare Cron Triggers (the Worker's own timer). Not a web route: nobody can call it from outside.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(
+      runScheduled(env, event).catch(async (e) => {
+        console.error("scheduled run error:", (e && e.stack) || e);
+        await alertChef(env, "⚠️ Aurion scheduled run stopped with an error: " + String((e && e.message) || e).slice(0, 300));
+      })
+    );
   },
 };
