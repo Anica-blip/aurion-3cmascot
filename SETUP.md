@@ -20,19 +20,19 @@
 | Service | What for |
 |---|---|
 | **Telegram** (Bot API, BotFather) | Receives and sends messages. Webhook set once with `setWebhook` (secret header and `allowed_updates` = `message`, `callback_query`). The command menu is set in BotFather (`/setcommands`). |
-| **Cloudflare** | Worker `aurion-bot` and its one Cron Trigger. Workers Paid plan (the Worker needs the Paid plan for its CPU and request limits). Observability (stored logs) is **off and stays off**. |
+| **Cloudflare** | Worker `aurion-bot` and its one Cron Trigger. Workers Paid plan (the Worker needs the Paid plan for its CPU and request limits). Observability (stored logs) is **off and stays off**: Cloudflare switched it on for this Worker by itself on 22 Nov 2026 and Chef switched it off in the Worker's Settings, so check Settings, Observability after every deploy. |
 | **Supabase**, project **3C Control Center** (`uqyqpwhkzlhqxcqajhkn`) | All the bot's tables, and `scheduled_posts` / `dashboard_posts` for the schedule. |
 | **OpenAI** | Answers for `/ask` when the FAQ and keyword tables have nothing. |
 | **GitHub** | This repository. No GitHub Actions are used by the bot. |
 
-Removed on 22 Nov 2026 and no longer used: Render (bot and cron job), the Vercel cron gateway (`cron-gateway-auth`), Railway, and the old GitHub Actions posting workflow.
+Removed on 22 Nov 2026 and no longer used: Render (bot and cron job), the Vercel cron gateway (`cron-gateway-auth`), Railway, and the old GitHub Actions posting workflow. The two old Supabase edge functions `telegram-bot` and `telegram-webhook-setup` (project 3C Control Center) were deleted on 23 Nov 2026; the Worker does all of their work.
 
 ## 4. Supabase (project 3C Control Center)
 
 | Table | Used for | Row Level Security and access |
 |---|---|---|
-| `faq` | `/faq` buttons, first answer for `/ask` | On. Public read. |
-| `fact` | `/fact` | On. Public read. |
+| `faq` | `/faq` buttons, first answer for `/ask` | On. Closed to everyone except the Worker's service key: its one SELECT policy compares `user_id` with the signed-in account, and every row has no `user_id`, so it matches nothing. |
+| `fact` | `/fact` | On. Closed to everyone except the Worker's service key, same reason as `faq`. |
 | `keyword` | Trigger words and answers | On. Owner-only read; the Worker reads it with its service key. |
 | `greeted_users` | Members already welcomed (`telegram_user_id`) | On, no policy: only the service key can read or write. |
 | `about_3c` | The 3C briefing the AI reads | On, no policy: only the service key can read or write. Written by Chief from the Drive sheet tab `about_3c`. |
@@ -89,14 +89,13 @@ The five checks of the Standard, for this Worker:
 | Public read still works | Not applicable: no public routes |
 | Wrong origin blocked | Not applicable: no browser calls |
 
-Live: `/faq` answered after the 22 Nov deploy. First live test of the schedule: a text post at 11:00 on 22 Nov arrived on time and was saved in `dashboard_posts` as sent; its formatting did not come out (stars and link tags shown as text), which led to the formatting fix above. The 14:30 slot and the formatting were checked live and came out right. Still to test live: an album of three pictures, then one single picture, one GIF and one video, each to a test chat before any real post.
+Live: `/faq` answered after the 22 Nov deploy. First live test of the schedule: a text post at 11:00 on 22 Nov arrived on time and was saved in `dashboard_posts` as sent; its formatting did not come out (stars and link tags shown as text), which led to the formatting fix above. The 14:30 slot and the formatting were checked live and came out right. On 22 to 23 Nov 2026 Chef also tested an album of three pictures (saved as sent, one Telegram message id stored) and a single picture (saved as sent); both looked right in the chat. Still to test live: one GIF and one video, each to a test chat before any real post.
 
 ## 9. Open points
 
-- Live check of the eight slots and the formatting fix, then the picture, GIF and video tests: results to be added here.
+- Live tests still to do: one GIF and one video (test chat first); results to be added here. A post with pictures and no text stays refused (Chef's decision, 23 Nov 2026: a picture needs text).
 - The dashboard still saves `**` and link tags for the Worker to convert. A separate dashboard job will make it save ready-made Telegram formatting; until then the Worker converts as described in section 5.
 - Editing a sent post: in a Telegram group only the sender, here the bot, can edit a message, so a post in the ClubHouse chatroom cannot be edited by Chef; in a channel, admins can. Chef's way: post to the channel, check it, then forward to the chat. No Worker feature is planned for editing (Chef's decision, 22 Nov 2026).
-- `worker/wrangler.toml` still says observability enabled in the old copy; the new copy sets it to `false` (it is only a record).
 - A scheduled row needs a real `user_id`; if it is missing, the post is sent but cannot be saved in `dashboard_posts`, and Chef is messaged. `post_platforms` has a link to `scheduled_posts` without cascade: if a row ever has entries there, the delete step fails and Chef is messaged.
 - The old Python bot files (`main.py`, `Procfile`, `runtime.txt`, `requirements.txt`, `scheduled_posts_runner.py`) were removed on 22 Nov 2026. They stay in the Git history if ever needed.
 
@@ -104,6 +103,7 @@ Live: `/faq` answered after the 22 Nov deploy. First live test of the schedule: 
 
 | Date | Change | By |
 |---|---|---|
+| 23 Nov 2026 | Corrected the `faq` and `fact` rows in section 4 (they were wrongly marked public read; they are closed to everyone except the service key); recorded that the two old edge functions were deleted, the Observability note, and the live album and picture results; removed the outdated `wrangler.toml` open point | Champ |
 | 22 Nov 2026 | Albums: two to ten pictures or videos in one post are sent as one Telegram album (caption on the first item; no GIFs inside an album) | Champ |
 | 22 Nov 2026 | Eight posting slots (08:30, 10:30, 12:30, 14:30, 16:30, 18:30, 19:30, 20:30) on one half-hour Cron Trigger; formatting made as tolerant as the old Render runner (spaces inside `**`, hand-typed `<a href>` links and Telegram tags) | Champ |
 | 22 Nov 2026 | Scheduled posting added to `worker/worker.js` (own timer, 8 Cron Triggers, lane `aurion-bot`); Render, the Vercel gateway and the old workflow removed; observability off for all Workers; README.md and SETUP.md written to the Standard; old Python bot files removed; database clean-up migrations of 21 Nov saved in `supabase/migrations/` | Champ |
